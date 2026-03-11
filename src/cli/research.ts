@@ -7,7 +7,7 @@ import { Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
 const view = Args.text({ name: "view" }).pipe(
-  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|graph|revisit|scorecard|budget|claims|improvements|next-actions"),
+  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|graph|revisit|scorecard|budget|claims|improvements|review|next-actions"),
 );
 
 const target = Args.text({ name: "target" }).pipe(
@@ -30,14 +30,26 @@ const recent = Options.boolean("recent").pipe(
   Options.withDefault(false),
 );
 
+const kind = Options.text("kind").pipe(
+  Options.withDescription("Review target kind: proposal|improvement"),
+  Options.optional,
+);
+
+const action = Options.text("action").pipe(
+  Options.withDescription("Review action: approve|scope_trial|defer|revisit|archive|queue|start_review|promote|dismiss"),
+  Options.optional,
+);
+
 export const research = Command.make(
   "research",
-  { view, target, state, tag, recent },
-  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent }) =>
+  { view, target, state, tag, recent, kind, action },
+  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent, kind: kindOpt, action: actionOpt }) =>
     Effect.promise(async () => {
       const target = Option.getOrUndefined(targetOpt);
       const state = Option.getOrUndefined(stateOpt);
       const tag = Option.getOrUndefined(tagOpt);
+      const kind = Option.getOrUndefined(kindOpt);
+      const action = Option.getOrUndefined(actionOpt);
       const { createRuntime } = await import("../init.js");
       const runtime = await createRuntime();
 
@@ -212,6 +224,38 @@ export const research = Command.make(
               ...evaluations.map((evaluation) => `${evaluation.evaluationId}  outcome=${evaluation.outcome.padEnd(17)} run=${evaluation.runId}  ${evaluation.recommendedAction}`),
             ]);
             return;
+          }
+          case "review": {
+            if (!target || !kind || !action) {
+              console.error("Usage: athena research review <target-id> --kind proposal|improvement --action <action>");
+              process.exit(1);
+            }
+            if (kind === "proposal") {
+              const updated = runtime.teamStore.reviewProposalBrief(
+                resolvedSessionId,
+                target,
+                action as import("../research/contracts.js").ProposalReviewAction,
+              );
+              printLines([
+                `${updated.proposalId}  status=${updated.status}`,
+                `summary  ${updated.summary}`,
+              ]);
+              return;
+            }
+            if (kind === "improvement") {
+              const updated = runtime.teamStore.reviewImprovementProposal(
+                resolvedSessionId,
+                target,
+                action as import("../research/contracts.js").ImprovementReviewAction,
+              );
+              printLines([
+                `${updated.improvementId}  review=${updated.reviewStatus} status=${updated.status}`,
+                `title  ${updated.title}`,
+              ]);
+              return;
+            }
+            console.error(`Unknown review kind: ${kind}`);
+            process.exit(1);
           }
           case "next-actions": {
             const proposals = runtime.teamStore.listProposalBriefs(resolvedSessionId);

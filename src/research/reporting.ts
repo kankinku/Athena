@@ -236,6 +236,16 @@ export function buildResearchReportInput(
     );
   }
 
+  const proposalApprovals = proposals.filter((proposal) => proposal.status === "candidate" || proposal.status === "revisit_due");
+  const improvementApprovals = improvements.filter((proposal) => proposal.reviewStatus === "queued");
+  if (proposalApprovals.length > 0 || improvementApprovals.length > 0) {
+    sections.push(
+      "## Approval Queue",
+      ...proposalApprovals.map((proposal) => `- proposal ${proposal.proposalId}: status=${proposal.status}; title=${proposal.title}`),
+      ...improvementApprovals.map((proposal) => `- improvement ${proposal.improvementId}: review=${proposal.reviewStatus}; priority=${proposal.priorityScore}; title=${proposal.title}`),
+    );
+  }
+
   if (improvements.length > 0) {
     const prioritizedImprovements = [...improvements].sort((a, b) => b.priorityScore - a.priorityScore);
     sections.push(

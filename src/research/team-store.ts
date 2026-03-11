@@ -16,6 +16,7 @@ import type {
   ImprovementEvaluationRecord,
   ImprovementReviewAction,
   ImprovementProposalRecord,
+  ProposalReviewAction,
   ProposalBrief,
   ProposalScorecard,
   ReconsiderationTrigger,
@@ -553,6 +554,23 @@ export class TeamStore {
       now,
     );
     return brief;
+  }
+
+  reviewProposalBrief(
+    sessionId: string,
+    proposalId: string,
+    action: ProposalReviewAction,
+  ): ProposalBrief {
+    const proposal = this.getProposalBrief(sessionId, proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal brief not found: ${proposalId}`);
+    }
+    const nextStatus = nextProposalStatus(proposal.status, action);
+    const updated: ProposalBrief = {
+      ...proposal,
+      status: nextStatus,
+    };
+    return this.saveProposalBrief(sessionId, updated);
   }
 
   saveProposalScorecard(sessionId: string, scorecard: ProposalScorecard): ProposalScorecard {
@@ -1166,6 +1184,36 @@ function nextImprovementProposalStatus(
       return "approved";
     case "dismiss":
       return current === "rolled_back" ? current : "rejected";
+  }
+}
+
+function nextProposalStatus(
+  current: ProposalBrief["status"],
+  action: ProposalReviewAction,
+): ProposalBrief["status"] {
+  switch (action) {
+    case "approve":
+      if (current === "archived") {
+        throw new Error("Cannot approve an archived proposal");
+      }
+      return "ready_for_experiment";
+    case "scope_trial":
+      if (current === "archived") {
+        throw new Error("Cannot scope a trial for an archived proposal");
+      }
+      return "scoped_trial";
+    case "defer":
+      if (current === "archived") {
+        throw new Error("Cannot defer an archived proposal");
+      }
+      return "deferred";
+    case "revisit":
+      if (current === "archived") {
+        throw new Error("Cannot revisit an archived proposal");
+      }
+      return "revisit_due";
+    case "archive":
+      return "archived";
   }
 }
 

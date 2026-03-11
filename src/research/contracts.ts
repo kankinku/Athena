@@ -24,6 +24,8 @@ export type ProposalStatus =
   | "revisit_due"
   | "archived";
 
+export type ProposalReviewAction = "approve" | "scope_trial" | "defer" | "revisit" | "archive";
+
 export type ExperimentOutcomeStatus =
   | "baseline"
   | "keep"

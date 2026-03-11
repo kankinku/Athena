@@ -105,6 +105,7 @@ athena report <session-id>
 | `claims` / `claims <id>` | Canonical claim inventory and per-claim evidence detail |
 | `revisit due` | Proposals that need reconsideration |
 | `improvements` | Self-improvement proposals and evaluations |
+| `review <id> --kind ... --action ...` | Apply an operator approval/review action safely |
 | `next-actions` | The most actionable operator follow-ups right now |
 
 ## Research Workflow
@@ -147,6 +148,8 @@ Use `athena research automation <run-id>` to inspect:
 - checkpoint cadence and recent checkpoints
 - timeout budget for the run
 
+If automation is blocked by policy, the run state will surface the reason. The operator then resolves it via `athena research review ...` rather than by guessing internal state transitions.
+
 ## Self-Improvement Loop
 
 Athena now records a safe self-improvement foundation rather than self-editing blindly.
@@ -164,6 +167,36 @@ This means Athena can accumulate reusable lessons about:
 - reporting quality
 - research strategy
 
+## Operator Review Actions
+
+Athena now supports explicit operator-side approval/review actions.
+
+### Proposal actions
+
+```bash
+athena research review <proposal-id> --kind proposal --action approve
+athena research review <proposal-id> --kind proposal --action scope_trial
+athena research review <proposal-id> --kind proposal --action defer
+athena research review <proposal-id> --kind proposal --action revisit
+athena research review <proposal-id> --kind proposal --action archive
+```
+
+### Improvement actions
+
+```bash
+athena research review <improvement-id> --kind improvement --action queue
+athena research review <improvement-id> --kind improvement --action start_review
+athena research review <improvement-id> --kind improvement --action promote
+athena research review <improvement-id> --kind improvement --action dismiss
+```
+
+Safety rules:
+
+- proposal review actions move proposal status through guarded transitions
+- improvement review actions enforce terminal-state safety
+- promoting an improvement automatically dismisses duplicate items with the same `mergeKey`
+- automation blocks stay visible in run state until the operator resolves them
+
 ## Operator Runbook
 
 When checking the system, this sequence is the fastest way to understand current state:
@@ -177,12 +210,22 @@ When checking the system, this sequence is the fastest way to understand current
 7. `athena research improvements`
 8. `athena report <session-id>`
 
+When you need to actively move work forward:
+
+1. inspect `athena research next-actions`
+2. inspect the blocking item with `workflow`, `automation`, `proposals`, or `improvements`
+3. apply `athena research review <id> --kind ... --action ...`
+4. re-check `athena research proposals` or `athena research improvements`
+5. confirm the overall system state again with `athena report <session-id>`
+
 Use this when you want to answer:
 - What is Athena doing right now?
 - Which proposal is blocked or needs revisit?
 - Is automation still within policy?
 - What changed the latest decision?
 - Did the last run teach Athena anything reusable?
+- Which item needs explicit operator approval?
+- Was the approval/review action applied safely?
 
 ## Keys
 

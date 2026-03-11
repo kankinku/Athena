@@ -33,7 +33,7 @@
     "openai"
   ],
   "author": "snoglobe",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.0",
     "@effect/cli": "^0.73.2",

@@ -11,6 +11,24 @@ It can operate seamlessly over SSH (even multiple machines), keeps the model in 
 
 You can leave it to work overnight and don't have to worry about it exiting the loop early to stupidly ask you something or because it has to wait for something. And hopefully you'll wake up to results.
 
+## Current Status
+
+Athena is currently in a `v0.3` short-term closure state as a:
+
+`stable operator-supervised research system`
+
+Today, that means the repo already includes:
+
+- structured research state with canonical claims, proposal scoring, workflow history, automation policy, and self-improvement records
+- operator-facing control surfaces for inspection, approval, review, and reporting
+- safety rails for persistence, migrations, automation gates, CLI/report regressions, and simulation launch failures
+
+If you want the exact release boundary for this milestone, see:
+
+- `docs/release-readiness-v0.3.md`
+- `docs/pr-summary-research-stack.md`
+- `docs/next-phase-gap-analysis.md`
+
 ## Install
 
 ```bash

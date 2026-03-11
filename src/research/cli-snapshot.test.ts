@@ -115,6 +115,7 @@ test("research CLI key operator views stay text-stable", async () => {
       `run  ${run.id} continue workflow=draft stage=collection\nexperiment  proposal-cli prepare validation run`,
     );
   } finally {
+    closeDb();
     rmSync(home, { recursive: true, force: true });
     delete process.env.ATHENA_HOME;
   }

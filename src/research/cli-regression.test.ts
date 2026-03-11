@@ -78,6 +78,7 @@ test("research CLI renders workflow and automation operator views from persisted
     assert.match(improvementsOutput, /priority=0.90/);
     assert.match(improvementsOutput, /review=queued/);
   } finally {
+    closeDb();
     rmSync(home, { recursive: true, force: true });
     delete process.env.ATHENA_HOME;
   }

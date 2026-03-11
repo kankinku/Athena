@@ -122,3 +122,29 @@ test("SimulationRunner records launch_failed when background launch throws", asy
     delete process.env.ATHENA_HOME;
   }
 });
+
+test("SimulationRunner records launch_failed when branch preparation throws", async () => {
+  const { home, closeDb, teamStore, session } = await createRunnerHarness();
+  try {
+    const runner = new SimulationRunner(
+      { execBackground: async () => ({ machineId: "local", pid: 1234, logPath: "log.txt" }), isRunning: async () => false, removeBackgroundProcess: () => {} } as never,
+      { exec: async () => ({ stdout: "", stderr: "", code: 0 }) } as never,
+      { getTaskSummary: () => ({}) } as never,
+      { collectAll: async () => {}, removeSource: () => {} } as never,
+      { createBranch: async () => { throw new Error("branch creation failed"); } } as never,
+      teamStore,
+      () => session.id,
+      () => ({ totalCostUsd: 0, lastInputTokens: 0 }),
+    );
+
+    await assert.rejects(() => runner.launch(createCharter({ repoPath: "/repo" })), /branch creation failed/);
+    const runs = teamStore.listRecentSimulationRuns(session.id, 10);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.status, "launch_failed");
+    assert.match(runs[0]?.result?.notes ?? "", /Launch failed: branch creation failed/);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});

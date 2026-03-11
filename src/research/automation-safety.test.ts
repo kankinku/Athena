@@ -115,3 +115,46 @@ test("retry and timeout safety blocks unsafe automation continuation", async () 
     assert.match((reloadedRun?.latestOutput as { automationBlock?: { reason: string } } | undefined)?.automationBlock?.reason ?? "", /automation timeout exceeded/i);
   });
 });
+
+test("experiment approval gate keeps proposals queued for operator launch review", async () => {
+  await withResearchRuntime(async ({ SessionStore, TeamStore, MemoryStore, GraphMemory, TeamOrchestrator }) => {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+    const memoryStore = new MemoryStore(session.id);
+    const graphMemory = new GraphMemory(memoryStore);
+    const orchestrator = new TeamOrchestrator(teamStore, graphMemory, () => session.id);
+
+    const run = orchestrator.startRun("experiment approval gate test");
+    teamStore.configureAutomation(run.id, {
+      automationPolicy: {
+        ...run.automationPolicy,
+        requireProposalApproval: false,
+        requireExperimentApproval: true,
+      },
+    });
+    teamStore.transitionWorkflow(run.id, "evaluating", "proposal is ready for execution review");
+
+    orchestrator.recordProposalBrief(run.id, {
+      proposalId: "proposal-experiment-gated",
+      title: "Experiment-gated proposal",
+      summary: "Should stop before simulation launch.",
+      targetModules: ["trainer"],
+      expectedGain: "moderate gain",
+      expectedRisk: "low risk",
+      codeChangeScope: ["config"],
+      status: "candidate",
+      experimentBudget: { maxWallClockMinutes: 15 },
+      stopConditions: [],
+      reconsiderConditions: [],
+      claimIds: [],
+    });
+
+    const blockedRun = teamStore.getTeamRun(run.id);
+    assert.equal(blockedRun?.currentStage, "planning");
+    assert.equal(blockedRun?.workflowState, "evaluating");
+    assert.equal((blockedRun?.latestOutput as { proposalStatus?: string; automationBlock?: { action: string; reason: string } } | undefined)?.proposalStatus, "ready_for_experiment");
+    assert.equal((blockedRun?.latestOutput as { automationBlock?: { action: string } } | undefined)?.automationBlock?.action, "experiment");
+    assert.match((blockedRun?.latestOutput as { automationBlock?: { reason: string } } | undefined)?.automationBlock?.reason ?? "", /experiment approval required/i);
+  });
+});

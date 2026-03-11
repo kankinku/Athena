@@ -422,7 +422,15 @@ export class TeamOrchestrator {
   }
 
   rollbackRun(runId: string, reason: string): TeamRunRecord | null {
-    return this.teamStore.rollbackWorkflow(runId, reason);
+    const rolledBack = this.teamStore.rollbackWorkflow(runId, reason);
+    if (rolledBack) {
+      this.teamStore.recordAutomationCheckpoint(runId, "rollback", {
+        reason,
+        workflowState: rolledBack.workflowState,
+        stage: rolledBack.currentStage,
+      });
+    }
+    return rolledBack;
   }
 
   configureAutomation(

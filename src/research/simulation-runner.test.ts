@@ -92,6 +92,12 @@ test("SimulationRunner enforces maxConcurrentRuns before launch", async () => {
 test("SimulationRunner records launch_failed when background launch throws", async () => {
   const { home, closeDb, teamStore, session } = await createRunnerHarness();
   try {
+    const run = teamStore.createTeamRun(session.id, "launch failure parent run");
+    teamStore.updateTeamRun(run.id, {
+      latestOutput: {
+        proposalId: "proposal-1",
+      },
+    });
     const failingExecutor = {
       execBackground: async () => {
         throw new Error("ssh launch failed");
@@ -116,6 +122,8 @@ test("SimulationRunner records launch_failed when background launch throws", asy
     assert.equal(runs[0]?.status, "launch_failed");
     assert.equal(runs[0]?.result?.outcomeStatus, "crash");
     assert.match(runs[0]?.result?.notes ?? "", /Launch failed: ssh launch failed/);
+    const checkpoints = teamStore.listAutomationCheckpoints(session.id, run.id);
+    assert.ok(checkpoints.some((checkpoint) => checkpoint.reason === "launch_failed"));
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });
@@ -126,6 +134,12 @@ test("SimulationRunner records launch_failed when background launch throws", asy
 test("SimulationRunner records launch_failed when branch preparation throws", async () => {
   const { home, closeDb, teamStore, session } = await createRunnerHarness();
   try {
+    const run = teamStore.createTeamRun(session.id, "branch failure parent run");
+    teamStore.updateTeamRun(run.id, {
+      latestOutput: {
+        proposalId: "proposal-1",
+      },
+    });
     const runner = new SimulationRunner(
       { execBackground: async () => ({ machineId: "local", pid: 1234, logPath: "log.txt" }), isRunning: async () => false, removeBackgroundProcess: () => {} } as never,
       { exec: async () => ({ stdout: "", stderr: "", code: 0 }) } as never,
@@ -142,6 +156,8 @@ test("SimulationRunner records launch_failed when branch preparation throws", as
     assert.equal(runs.length, 1);
     assert.equal(runs[0]?.status, "launch_failed");
     assert.match(runs[0]?.result?.notes ?? "", /Launch failed: branch creation failed/);
+    const checkpoints = teamStore.listAutomationCheckpoints(session.id, run.id);
+    assert.ok(checkpoints.some((checkpoint) => checkpoint.reason === "launch_failed"));
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

@@ -284,7 +284,7 @@ export class TeamStore {
   noteAutomationBlock(runId: string, action: AutomationAction, reason: string): TeamRunRecord | null {
     const run = this.getTeamRun(runId);
     if (!run) return null;
-    return this.updateTeamRun(runId, {
+    const next = this.updateTeamRun(runId, {
       latestOutput: {
         ...(run.latestOutput ?? {}),
         automationBlock: {
@@ -294,6 +294,13 @@ export class TeamStore {
         },
       },
     });
+    if (next) {
+      this.recordAutomationCheckpoint(runId, `blocked:${action}`, {
+        reason,
+        workflowState: next.workflowState,
+      });
+    }
+    return next;
   }
 
   saveAutomationCheckpoint(sessionId: string, checkpoint: AutomationCheckpointRecord): AutomationCheckpointRecord {

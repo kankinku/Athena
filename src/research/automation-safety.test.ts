@@ -78,6 +78,8 @@ test("proposal approval gate blocks automatic progression into simulation", asyn
     assert.equal(blockedRun?.workflowState, "evaluating");
     assert.equal((blockedRun?.latestOutput as { automationBlock?: { action: string; reason: string } } | undefined)?.automationBlock?.action, "proposal");
     assert.match((blockedRun?.latestOutput as { automationBlock?: { reason: string } } | undefined)?.automationBlock?.reason ?? "", /proposal approval required/i);
+    const checkpoints = teamStore.listAutomationCheckpoints(session.id, run.id);
+    assert.ok(checkpoints.some((checkpoint) => checkpoint.reason === "blocked:proposal"));
   });
 });
 
@@ -113,6 +115,9 @@ test("retry and timeout safety blocks unsafe automation continuation", async () 
     reloadedRun = teamStore.getTeamRun(run.id);
     assert.equal((reloadedRun?.latestOutput as { automationBlock?: { action: string; reason: string } } | undefined)?.automationBlock?.action, "resume");
     assert.match((reloadedRun?.latestOutput as { automationBlock?: { reason: string } } | undefined)?.automationBlock?.reason ?? "", /automation timeout exceeded/i);
+    const checkpoints = teamStore.listAutomationCheckpoints(session.id, run.id);
+    assert.ok(checkpoints.some((checkpoint) => checkpoint.reason === "blocked:retry"));
+    assert.ok(checkpoints.some((checkpoint) => checkpoint.reason === "blocked:resume"));
   });
 });
 

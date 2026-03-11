@@ -139,6 +139,19 @@ export class SimulationRunner {
         status: "launch_failed",
         result,
       });
+      const parentRun = this.teamStore
+        .listRecentTeamRuns(this.sessionIdProvider(), 50)
+        .find((candidate) => {
+          const output = candidate.latestOutput as { proposalId?: string } | undefined;
+          return output?.proposalId === charter.proposalId;
+        });
+      if (parentRun) {
+        this.teamStore.recordAutomationCheckpoint(parentRun.id, "launch_failed", {
+          reason: message,
+          proposalId: charter.proposalId,
+          simulationId: run.id,
+        });
+      }
       throw error;
     }
   }

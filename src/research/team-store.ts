@@ -46,6 +46,8 @@ interface TeamRunRow {
   updated_at: number;
 }
 
+type AutomationAction = "proposal" | "experiment" | "resume" | "retry";
+
 export interface SimulationRunRecord {
   id: string;
   sessionId: string;
@@ -254,6 +256,44 @@ export class TeamStore {
     });
   }
 
+  canAutomateAction(
+    runId: string,
+    action: AutomationAction,
+  ): { ok: true; run: TeamRunRecord } | { ok: false; run: TeamRunRecord | null; reason: string } {
+    const run = this.getTeamRun(runId);
+    if (!run) {
+      return { ok: false, run: null, reason: "run not found" };
+    }
+    if (run.automationState.timeoutAt !== undefined && Date.now() >= run.automationState.timeoutAt) {
+      return { ok: false, run, reason: "automation timeout exceeded" };
+    }
+    if (action === "proposal" && run.automationPolicy.requireProposalApproval) {
+      return { ok: false, run, reason: "proposal approval required by automation policy" };
+    }
+    if (action === "experiment" && run.automationPolicy.requireExperimentApproval) {
+      return { ok: false, run, reason: "experiment approval required by automation policy" };
+    }
+    if (action === "retry" && run.automationState.retryCount >= run.retryPolicy.maxRetries) {
+      return { ok: false, run, reason: "retry limit reached" };
+    }
+    return { ok: true, run };
+  }
+
+  noteAutomationBlock(runId: string, action: AutomationAction, reason: string): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    return this.updateTeamRun(runId, {
+      latestOutput: {
+        ...(run.latestOutput ?? {}),
+        automationBlock: {
+          action,
+          reason,
+          at: Date.now(),
+        },
+      },
+    });
+  }
+
   saveAutomationCheckpoint(sessionId: string, checkpoint: AutomationCheckpointRecord): AutomationCheckpointRecord {
     const db = getDb();
     db.prepare(
@@ -378,8 +418,11 @@ export class TeamStore {
   }
 
   resumeAutomation(runId: string, reason: string): TeamRunRecord | null {
-    const run = this.getTeamRun(runId);
-    if (!run) return null;
+    const gate = this.canAutomateAction(runId, "resume");
+    if (!gate.ok) {
+      return this.noteAutomationBlock(runId, "resume", gate.reason);
+    }
+    const run = gate.run;
     return this.updateTeamRun(runId, {
       automationState: {
         ...run.automationState,
@@ -394,8 +437,11 @@ export class TeamStore {
   }
 
   recordAutomationRetry(runId: string, reason: string): TeamRunRecord | null {
-    const run = this.getTeamRun(runId);
-    if (!run) return null;
+    const gate = this.canAutomateAction(runId, "retry");
+    if (!gate.ok) {
+      return this.noteAutomationBlock(runId, "retry", gate.reason);
+    }
+    const run = gate.run;
     const retryCount = Math.min(run.retryPolicy.maxRetries, run.automationState.retryCount + 1);
     return this.updateTeamRun(runId, {
       automationState: {

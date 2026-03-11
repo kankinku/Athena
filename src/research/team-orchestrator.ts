@@ -200,6 +200,34 @@ export class TeamOrchestrator {
       targetId: proposalPath,
       relationship: CLAIM_GRAPH_RELATIONSHIPS.planningOutput,
     });
+    const proposalGate = this.teamStore.canAutomateAction(runId, "proposal");
+    if (!proposalGate.ok) {
+      const blockedRun = this.teamStore.noteAutomationBlock(runId, "proposal", proposalGate.reason);
+      return this.teamStore.updateTeamRun(runId, {
+        currentStage: "planning",
+        latestOutput: {
+          ...(blockedRun?.latestOutput ?? proposalGate.run?.latestOutput ?? {}),
+          proposalId: enrichedBrief.proposalId,
+          proposalStatus: enrichedBrief.status,
+          decisionId: decision.decisionId,
+          decisionType: decision.decisionType,
+        },
+      });
+    }
+    const experimentGate = this.teamStore.canAutomateAction(runId, "experiment");
+    if (!experimentGate.ok) {
+      const blockedRun = this.teamStore.noteAutomationBlock(runId, "experiment", experimentGate.reason);
+      return this.teamStore.updateTeamRun(runId, {
+        currentStage: "planning",
+        latestOutput: {
+          ...(blockedRun?.latestOutput ?? experimentGate.run?.latestOutput ?? {}),
+          proposalId: enrichedBrief.proposalId,
+          proposalStatus: "ready_for_experiment",
+          decisionId: decision.decisionId,
+          decisionType: decision.decisionType,
+        },
+      });
+    }
     this.teamStore.transitionWorkflow(runId, "running", "proposal approved for experiment execution", {
       metadata: {
         proposalId: enrichedBrief.proposalId,
@@ -337,6 +365,27 @@ export class TeamOrchestrator {
         experimentId: result.experimentId,
       },
     });
+    const continuationGate = this.teamStore.canAutomateAction(runId, "resume");
+    if (!continuationGate.ok) {
+      const blockedRun = this.teamStore.noteAutomationBlock(runId, "resume", continuationGate.reason);
+      this.teamStore.transitionWorkflow(runId, "failed", continuationGate.reason, {
+        metadata: {
+          experimentId: result.experimentId,
+          outcomeStatus: result.outcomeStatus,
+        },
+      });
+      return this.teamStore.updateTeamRun(runId, {
+        currentStage: "reporting",
+        status: "failed",
+        latestOutput: {
+          ...(blockedRun?.latestOutput ?? continuationGate.run?.latestOutput ?? {}),
+          experimentId: result.experimentId,
+          proposalId: result.proposalId,
+          outcomeStatus: result.outcomeStatus,
+          decisionId: decision.decisionId,
+        },
+      });
+    }
     this.teamStore.transitionWorkflow(
       runId,
       decision.decisionType === "revisit" ? "revisit_due" : nextStatus === "failed" ? "failed" : "reported",

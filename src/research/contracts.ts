@@ -426,6 +426,8 @@ export type ImprovementEvaluationOutcome = "promising" | "neutral" | "regressive
 
 export type ImprovementReviewStatus = "queued" | "in_review" | "promoted" | "dismissed";
 
+export type ImprovementReviewAction = "queue" | "start_review" | "promote" | "dismiss";
+
 export interface ImprovementProposalRecord {
   improvementId: string;
   runId: string;

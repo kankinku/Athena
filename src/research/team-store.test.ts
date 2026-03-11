@@ -122,3 +122,67 @@ test("TeamStore persists workflow automation and self-improvement state", async 
     delete process.env.ATHENA_HOME;
   }
 });
+
+test("TeamStore reviewImprovementProposal validates review transitions and dismisses duplicate merge keys on promote", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-improvement-review-"));
+  process.env.ATHENA_HOME = home;
+
+  const [{ SessionStore }, { TeamStore }, { closeDb }] = await Promise.all([
+    import("../store/session-store.js"),
+    import("./team-store.js"),
+    import("../store/database.js"),
+  ]);
+
+  try {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+
+    const baseProposal = {
+      runId: "run-1",
+      mergeKey: "research_strategy::proposal-1::keep",
+      title: "Research Strategy Improvement",
+      targetArea: "research_strategy" as const,
+      hypothesis: "Capture a reusable strategy.",
+      rationale: "Observed repeated success.",
+      expectedBenefit: "More reuse.",
+      priorityScore: 0.88,
+      rollbackPlan: "Discard the promoted heuristic.",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    teamStore.saveImprovementProposal(session.id, {
+      improvementId: "imp-primary",
+      reviewStatus: "queued",
+      status: "proposed",
+      ...baseProposal,
+    });
+    teamStore.saveImprovementProposal(session.id, {
+      improvementId: "imp-duplicate",
+      reviewStatus: "queued",
+      status: "proposed",
+      ...baseProposal,
+    });
+
+    const reviewing = teamStore.reviewImprovementProposal(session.id, "imp-primary", "start_review");
+    assert.equal(reviewing.reviewStatus, "in_review");
+
+    const promoted = teamStore.reviewImprovementProposal(session.id, "imp-primary", "promote");
+    assert.equal(promoted.reviewStatus, "promoted");
+    assert.equal(promoted.status, "approved");
+
+    const duplicate = teamStore.listImprovementProposals(session.id).find((item) => item.improvementId === "imp-duplicate");
+    assert.equal(duplicate?.reviewStatus, "dismissed");
+    assert.equal(duplicate?.status, "rejected");
+
+    assert.throws(
+      () => teamStore.reviewImprovementProposal(session.id, "imp-primary", "dismiss"),
+      /Cannot dismiss a promoted improvement proposal/,
+    );
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});

@@ -14,6 +14,7 @@ import type {
   ExperimentResult,
   IngestionSourceRecord,
   ImprovementEvaluationRecord,
+  ImprovementReviewAction,
   ImprovementProposalRecord,
   ProposalBrief,
   ProposalScorecard,
@@ -363,6 +364,42 @@ export class TeamStore {
       ? db.prepare(`SELECT payload_json FROM improvement_proposals WHERE session_id = ? AND run_id = ? ORDER BY updated_at DESC`).all(sessionId, runId)
       : db.prepare(`SELECT payload_json FROM improvement_proposals WHERE session_id = ? ORDER BY updated_at DESC`).all(sessionId);
     return (rows as Array<Record<string, unknown>>).map((row) => JSON.parse(row.payload_json as string) as ImprovementProposalRecord);
+  }
+
+  reviewImprovementProposal(
+    sessionId: string,
+    improvementId: string,
+    action: ImprovementReviewAction,
+  ): ImprovementProposalRecord {
+    const proposal = this.listImprovementProposals(sessionId).find((item) => item.improvementId === improvementId);
+    if (!proposal) {
+      throw new Error(`Improvement proposal not found: ${improvementId}`);
+    }
+
+    const nextReviewStatus = nextImprovementReviewStatus(proposal.reviewStatus, action);
+    const nextStatus = nextImprovementProposalStatus(proposal.status, action);
+    const updated: ImprovementProposalRecord = {
+      ...proposal,
+      reviewStatus: nextReviewStatus,
+      status: nextStatus,
+      updatedAt: Date.now(),
+    };
+
+    const duplicates = this.listImprovementProposals(sessionId)
+      .filter((item) => item.improvementId !== proposal.improvementId && item.mergeKey === proposal.mergeKey);
+
+    for (const duplicate of duplicates) {
+      if (action === "promote") {
+        this.saveImprovementProposal(sessionId, {
+          ...duplicate,
+          reviewStatus: "dismissed",
+          status: duplicate.status === "rolled_back" ? duplicate.status : "rejected",
+          updatedAt: updated.updatedAt,
+        });
+      }
+    }
+
+    return this.saveImprovementProposal(sessionId, updated);
   }
 
   saveImprovementEvaluation(sessionId: string, evaluation: ImprovementEvaluationRecord): ImprovementEvaluationRecord {
@@ -1084,6 +1121,52 @@ function mapTeamRun(row: TeamRunRow): TeamRunRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function nextImprovementReviewStatus(
+  current: ImprovementProposalRecord["reviewStatus"],
+  action: ImprovementReviewAction,
+): ImprovementProposalRecord["reviewStatus"] {
+  switch (action) {
+    case "queue":
+      if (current === "promoted" || current === "dismissed") {
+        throw new Error(`Cannot queue improvement from terminal review state: ${current}`);
+      }
+      return "queued";
+    case "start_review":
+      if (current === "promoted" || current === "dismissed") {
+        throw new Error(`Cannot start review from terminal review state: ${current}`);
+      }
+      return "in_review";
+    case "promote":
+      if (current === "dismissed") {
+        throw new Error("Cannot promote a dismissed improvement proposal");
+      }
+      return "promoted";
+    case "dismiss":
+      if (current === "promoted") {
+        throw new Error("Cannot dismiss a promoted improvement proposal");
+      }
+      return "dismissed";
+  }
+}
+
+function nextImprovementProposalStatus(
+  current: ImprovementProposalRecord["status"],
+  action: ImprovementReviewAction,
+): ImprovementProposalRecord["status"] {
+  switch (action) {
+    case "queue":
+    case "start_review":
+      return current;
+    case "promote":
+      if (current === "rolled_back") {
+        throw new Error("Cannot promote a rolled back improvement proposal");
+      }
+      return "approved";
+    case "dismiss":
+      return current === "rolled_back" ? current : "rejected";
+  }
 }
 
 function defaultAutomationPolicy(): AutomationPolicy {

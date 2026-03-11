@@ -68,9 +68,121 @@ It will write training scripts, launch runs, parse metrics from stdout, set up m
 | `/sticky <text>` | Pin a note to the sidebar |
 | `/stickies` | List sticky notes |
 | `/memory [path]` | Browse the agent's memory tree |
+| `athena research <view> [target]` | Inspect structured research state from the CLI |
+| `athena report [session-id]` | Generate an operator-facing research report |
 | `/status` | Provider, model, cost, state |
 | `/clear` | Clear conversation |
 | `/help` | Show all commands |
+
+## Research Operator Views
+
+Athena now exposes the research system as a first-class operator surface.
+
+```bash
+athena research runs
+athena research workflow <run-id>
+athena research automation <run-id>
+athena research proposals --state revisit_due
+athena research scorecard <proposal-id>
+athena research decisions <proposal-or-decision-id>
+athena research claims
+athena research claims <canonical-claim-id>
+athena research improvements
+athena research next-actions
+athena report <session-id>
+```
+
+### Research Views
+
+| View | What it shows |
+|---|---|
+| `runs` | Run-level stage, workflow state, and high-level status |
+| `workflow <run-id>` | Workflow transition history for a run |
+| `automation <run-id>` | Automation mode, approval gates, retry/checkpoint/timeout state |
+| `proposals` | Proposal queue with evidence/freshness/contradiction summary |
+| `scorecard <proposal-id>` | Detailed scoring axes and claim-support summary |
+| `decisions [id]` | Decision list or detail view with drift notes |
+| `claims` / `claims <id>` | Canonical claim inventory and per-claim evidence detail |
+| `revisit due` | Proposals that need reconsideration |
+| `improvements` | Self-improvement proposals and evaluations |
+| `next-actions` | The most actionable operator follow-ups right now |
+
+## Research Workflow
+
+Athena's research loop now persists an explicit workflow state:
+
+```text
+draft -> ready -> approved -> running -> evaluating -> reported
+                                            \-> revisit_due
+                                            \-> failed
+```
+
+- `draft` / `ready` / `approved` cover intake and authorization
+- `running` means collection or experiment execution is active
+- `evaluating` means Athena is scoring evidence or simulation results
+- `reported` means the run has a stable reportable outcome
+- `revisit_due` means new evidence or contradiction pressure requires another pass
+
+Use `athena research workflow <run-id>` when you need the exact transition history.
+
+## Automation Modes
+
+Athena tracks automation policy per run:
+
+```text
+manual
+assisted
+supervised-auto
+overnight-auto
+```
+
+- `manual` keeps proposal, experiment, and revisit approval gated
+- `assisted` lowers friction but still assumes active operator review
+- `supervised-auto` allows bounded autonomous progress under policy
+- `overnight-auto` is intended for unattended execution with checkpoints, retry limits, and timeout windows
+
+Use `athena research automation <run-id>` to inspect:
+- approval requirements
+- retry counts and retry policy
+- checkpoint cadence and recent checkpoints
+- timeout budget for the run
+
+## Self-Improvement Loop
+
+Athena now records a safe self-improvement foundation rather than self-editing blindly.
+
+- Each finished run can emit an improvement proposal
+- Each improvement proposal gets an evaluation outcome
+- Rollback guidance is preserved with the proposal
+- Operators can inspect proposals with `athena research improvements`
+
+This means Athena can accumulate reusable lessons about:
+- automation policy
+- workflow guardrails
+- evaluation strategy
+- decision policy
+- reporting quality
+- research strategy
+
+## Operator Runbook
+
+When checking the system, this sequence is the fastest way to understand current state:
+
+1. `athena research runs`
+2. `athena research next-actions`
+3. `athena research workflow <run-id>`
+4. `athena research automation <run-id>`
+5. `athena research proposals`
+6. `athena research scorecard <proposal-id>`
+7. `athena research improvements`
+8. `athena report <session-id>`
+
+Use this when you want to answer:
+- What is Athena doing right now?
+- Which proposal is blocked or needs revisit?
+- Is automation still within policy?
+- What changed the latest decision?
+- Did the last run teach Athena anything reusable?
 
 ## Keys
 
@@ -213,6 +325,8 @@ git clone https://github.com/snoglobe/athena.git
 cd athena
 npm install
 npm run dev          # tsx src/index.tsx
+npm run test:research
+npm run smoke:research
 npm run build        # tsc
 npm start            # node dist/index.js
 ```

@@ -1,5 +1,16 @@
 import { nanoid } from "nanoid";
-import type { ExtractedClaim, IngestionSourceRecord, ResearchCandidatePack } from "./contracts.js";
+import type {
+  CanonicalClaim,
+  ExtractedClaim,
+  IngestionSourceRecord,
+  ResearchCandidatePack,
+} from "./contracts.js";
+import {
+  buildCanonicalClaimId,
+  buildClaimSemanticKey,
+  normalizeClaimStatement,
+  normalizeMethodTag,
+} from "./claim-graph.js";
 
 export function createIngestionSource(input: {
   sourceType: IngestionSourceRecord["sourceType"];
@@ -30,14 +41,16 @@ export function createCandidatePackFromSource(input: {
   counterEvidence?: string[];
   openQuestions?: string[];
 }): ResearchCandidatePack {
-  const normalizedMethods = dedupe((input.methods ?? []).map(normalizeMethodTag).filter(Boolean));
-  const claims = input.claims.map((claim) => normalizeClaim(claim, input.source, normalizedMethods[0]));
+  const normalizedMethods = dedupe((input.methods ?? []).map(normalizeMethodTag).filter(isNonEmptyString));
+  const claims = input.claims.map((claim) => normalizeClaim(claim, input.source, input.problemArea, normalizedMethods[0]));
+  const canonicalClaims = buildCanonicalClaims(claims);
   return {
     candidateId: `candidate-${input.source.sourceId}`,
     sourceId: input.source.sourceId,
     problemArea: input.problemArea,
     documents: input.source.url ? [input.source.url] : [input.source.title],
     claims,
+    canonicalClaims,
     methods: input.methods ?? [],
     normalizedMethods,
     counterEvidence: input.counterEvidence ?? [],
@@ -49,29 +62,83 @@ export function createCandidatePackFromSource(input: {
   };
 }
 
+export function buildCanonicalClaims(claims: ExtractedClaim[]): CanonicalClaim[] {
+  const canonicalMap = new Map<string, CanonicalClaim>();
+
+  for (const claim of claims) {
+    const canonicalClaimId = claim.canonicalClaimId ?? buildCanonicalClaimId({
+      statement: claim.statement,
+      methodTag: claim.methodTag,
+    });
+    const semanticKey = claim.semanticKey ?? buildClaimSemanticKey({
+      statement: claim.statement,
+      methodTag: claim.methodTag,
+    });
+    const normalizedStatement = claim.normalizedStatement ?? normalizeClaimStatement(claim.statement);
+    const current = canonicalMap.get(canonicalClaimId);
+    const next: CanonicalClaim = current
+      ? {
+          ...current,
+          sourceClaimIds: dedupe([...current.sourceClaimIds, claim.sourceClaimId ?? claim.claimId]),
+          evidenceIds: dedupe([...current.evidenceIds, ...(claim.evidenceIds ?? [])]),
+          supportTags: dedupe([...current.supportTags, ...(claim.supportTags ?? [])]),
+          contradictionTags: dedupe([...current.contradictionTags, ...(claim.contradictionTags ?? [])]),
+          sourceIds: dedupe([...current.sourceIds, ...(claim.sourceId ? [claim.sourceId] : [])]),
+          confidence: averageDefined([current.confidence, claim.confidence]),
+          freshnessScore: averageDefined([current.freshnessScore, claim.freshnessScore]),
+        }
+      : {
+          canonicalClaimId,
+          semanticKey,
+          statement: claim.statement,
+          normalizedStatement,
+          primaryMethodTag: claim.methodTag,
+          sourceClaimIds: [claim.sourceClaimId ?? claim.claimId],
+          evidenceIds: [...(claim.evidenceIds ?? [])],
+          supportTags: [...(claim.supportTags ?? [])],
+          contradictionTags: [...(claim.contradictionTags ?? [])],
+          confidence: claim.confidence,
+          freshnessScore: claim.freshnessScore,
+          sourceIds: claim.sourceId ? [claim.sourceId] : [],
+        };
+    canonicalMap.set(canonicalClaimId, next);
+  }
+
+  return [...canonicalMap.values()];
+}
+
 function normalizeClaim(
   claim: ExtractedClaim,
   source: IngestionSourceRecord,
+  problemArea: string,
   methodTag?: string,
 ): ExtractedClaim {
-  const supportTags = inferSupportTags(claim.statement);
-  const contradictionTags = inferContradictionTags(claim.statement);
+  const normalizedMethodTag = claim.methodTag ?? methodTag;
+  const supportTags = dedupe([...(claim.supportTags ?? []), ...inferSupportTags(claim.statement)]);
+  const contradictionTags = dedupe([...(claim.contradictionTags ?? []), ...inferContradictionTags(claim.statement)]);
+  const normalizedStatement = normalizeClaimStatement(claim.statement);
+  const semanticKey = buildClaimSemanticKey({
+    statement: claim.statement,
+    methodTag: normalizedMethodTag,
+    problemArea,
+  });
+  const canonicalClaimId = buildCanonicalClaimId({
+    statement: claim.statement,
+    methodTag: normalizedMethodTag,
+    problemArea,
+  });
   return {
     ...claim,
+    sourceClaimId: claim.sourceClaimId ?? claim.claimId,
+    canonicalClaimId,
+    semanticKey,
+    normalizedStatement,
     sourceId: claim.sourceId ?? source.sourceId,
     source: claim.source ?? source.title,
-    methodTag: claim.methodTag ?? methodTag,
+    methodTag: normalizedMethodTag,
     supportTags,
     contradictionTags,
   };
-}
-
-function normalizeMethodTag(method: string): string {
-  return method
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 function inferSupportTags(statement: string): string[] {
@@ -93,6 +160,14 @@ function inferContradictionTags(statement: string): string[] {
 
 function dedupe(items: string[]): string[] {
   return [...new Set(items)];
+}
+
+function isNonEmptyString(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function averageDefined(values: Array<number | undefined>): number | undefined {
+  return average(values);
 }
 
 function average(values: Array<number | undefined>): number | undefined {

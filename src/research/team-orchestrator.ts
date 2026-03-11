@@ -7,15 +7,26 @@ import {
   buildResultDecision,
   evaluateReconsiderationTriggers,
 } from "./decision-engine.js";
+import { analyzeRunForImprovement } from "./improvement-engine.js";
+import {
+  buildCanonicalClaimPath,
+  CLAIM_GRAPH_RELATIONSHIPS,
+  resolveCanonicalClaimReference,
+} from "./claim-graph.js";
 import type {
+  AutomationCheckpointRecord,
+  AutomationPolicy,
+  CheckpointPolicy,
   ExperimentLineageRecord,
   ExperimentBudget,
   ExperimentResult,
   ProposalBrief,
   ResearchCandidatePack,
+  RetryPolicy,
   TeamRunRecord,
   TeamRunStatus,
   TeamStage,
+  TimeoutPolicy,
 } from "./contracts.js";
 import type { TeamStore } from "./team-store.js";
 
@@ -28,20 +39,26 @@ export class TeamOrchestrator {
 
   startRun(goal: string, budget?: ExperimentBudget): TeamRunRecord {
     const run = this.teamStore.createTeamRun(this.sessionIdProvider(), goal, budget);
+    this.teamStore.transitionWorkflow(run.id, "ready", "goal accepted for research planning");
+    this.teamStore.transitionWorkflow(run.id, "approved", "operator authorized run startup");
+    const activeRun = this.teamStore.transitionWorkflow(run.id, "running", "collection workflow started") ?? run;
     this.graphMemory.upsertNode({
       id: `/research/runs/${run.id}`,
       label: goal,
       gist: goal,
       kind: "note",
-      content: JSON.stringify(run, null, 2),
+      content: JSON.stringify(activeRun, null, 2),
     });
-    return run;
+    return activeRun;
   }
 
   recordCollectionPack(runId: string, pack: ResearchCandidatePack): TeamRunRecord | null {
     const run = this.teamStore.getTeamRun(runId);
     if (!run) return null;
     const subgraph = this.graphMemory.ingestCandidatePack(pack);
+    const canonicalClaimRefs = new Set(
+      (pack.canonicalClaims ?? []).map((claim) => buildCanonicalClaimPath(claim.canonicalClaimId)),
+    );
     if (pack.sourceId) {
       const source = this.teamStore.listIngestionSources(run.sessionId).find((item) => item.sourceId === pack.sourceId);
       if (source) {
@@ -50,6 +67,7 @@ export class TeamOrchestrator {
           status: "ingested",
           extractedCandidateId: pack.candidateId,
           claimCount: pack.claims.length,
+          canonicalClaims: pack.canonicalClaims,
           freshnessScore: pack.freshnessScore,
           evidenceConfidence: pack.evidenceConfidence,
           methodTags: pack.normalizedMethods ?? pack.methods,
@@ -57,6 +75,24 @@ export class TeamOrchestrator {
           updatedAt: Date.now(),
         });
       }
+    }
+
+    for (const proposal of this.teamStore.listProposalBriefs(run.sessionId)) {
+      const referencesKnownClaim = proposal.claimIds.some((claimId) => {
+        const normalized = claimId.startsWith("/") ? claimId : buildCanonicalClaimPath(claimId);
+        return canonicalClaimRefs.has(normalized);
+      });
+      if (!referencesKnownClaim) continue;
+      const claimSupport = this.teamStore.summarizeClaims(run.sessionId, proposal.claimIds);
+      const scorecard = buildProposalScorecard({
+        ...proposal,
+        claimSupport,
+      });
+      this.teamStore.saveProposalScorecard(run.sessionId, scorecard);
+      this.teamStore.updateProposalBrief(run.sessionId, proposal.proposalId, {
+        claimSupport,
+        scorecard,
+      });
     }
 
     const satisfiedTriggers = this.teamStore
@@ -84,8 +120,8 @@ export class TeamOrchestrator {
         for (const claimId of satisfied.evidenceLinks) {
           this.graphMemory.link({
             sourceId: `/research/proposals/${proposal.proposalId}`,
-            targetId: `/research/candidates/${pack.candidateId}/claims/${claimId}`,
-            relationship: "revisit_supported_by",
+            targetId: resolveCanonicalClaimReference(claimId),
+            relationship: CLAIM_GRAPH_RELATIONSHIPS.revisitSupportedBy,
           });
         }
       }
@@ -104,8 +140,15 @@ export class TeamOrchestrator {
     this.graphMemory.link({
       sourceId: `/research/runs/${runId}`,
       targetId: `/research/candidates/${pack.candidateId}`,
-      relationship: "collection_output",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.collectionOutput,
     });
+    if (run.workflowState === "running") {
+      this.teamStore.transitionWorkflow(runId, "evaluating", "collection artifacts prepared for proposal evaluation", {
+        metadata: {
+          candidateId: pack.candidateId,
+        },
+      });
+    }
     return this.teamStore.updateTeamRun(runId, {
       currentStage: "planning",
       latestOutput: {
@@ -119,9 +162,14 @@ export class TeamOrchestrator {
   recordProposalBrief(runId: string, brief: ProposalBrief): TeamRunRecord | null {
     const run = this.teamStore.getTeamRun(runId);
     if (!run) return null;
-    const scorecard = buildProposalScorecard(brief);
+    const claimSupport = this.teamStore.summarizeClaims(run.sessionId, brief.claimIds);
+    const scorecard = buildProposalScorecard({
+      ...brief,
+      claimSupport,
+    });
     const enrichedBrief: ProposalBrief = {
       ...brief,
+      claimSupport,
       scorecard,
     };
     this.teamStore.saveProposalScorecard(run.sessionId, scorecard);
@@ -150,18 +198,23 @@ export class TeamOrchestrator {
     this.graphMemory.link({
       sourceId: `/research/runs/${runId}`,
       targetId: proposalPath,
-      relationship: "planning_output",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.planningOutput,
+    });
+    this.teamStore.transitionWorkflow(runId, "running", "proposal approved for experiment execution", {
+      metadata: {
+        proposalId: enrichedBrief.proposalId,
+      },
     });
     this.graphMemory.link({
       sourceId: proposalPath,
       targetId: `/research/decisions/${decision.decisionId}`,
-      relationship: "evaluated_by",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.evaluatedBy,
     });
     for (const claimId of enrichedBrief.claimIds) {
       this.graphMemory.link({
         sourceId: proposalPath,
-        targetId: claimId,
-        relationship: "derived_from",
+        targetId: claimId.startsWith("/") ? claimId : buildCanonicalClaimPath(claimId),
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.derivedFrom,
       });
     }
     return this.teamStore.updateTeamRun(runId, {
@@ -190,12 +243,12 @@ export class TeamOrchestrator {
     this.graphMemory.link({
       sourceId: `/research/runs/${runId}`,
       targetId: resultPath,
-      relationship: "simulation_output",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.simulationOutput,
     });
     this.graphMemory.link({
       sourceId: `/research/proposals/${result.proposalId}`,
       targetId: resultPath,
-      relationship: "validated_by",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.validatedBy,
     });
     const latestDecision = this.teamStore.getLatestDecisionRecord(run.sessionId, result.proposalId);
     const proposal = this.teamStore.listProposalBriefs(run.sessionId).find((item) => item.proposalId === result.proposalId);
@@ -226,6 +279,18 @@ export class TeamOrchestrator {
         : undefined,
     };
     this.teamStore.saveDecisionRecord(run.sessionId, decision);
+    const simulationRun = this.teamStore.getSimulationRun(result.experimentId);
+    const improvement = analyzeRunForImprovement({
+      runId,
+      proposal,
+      result: enrichedResult,
+      decision,
+      rollbackPlan: simulationRun?.charter.rollbackPlan,
+    });
+    if (improvement.proposal) {
+      this.teamStore.saveImprovementProposal(run.sessionId, improvement.proposal);
+    }
+    this.teamStore.saveImprovementEvaluation(run.sessionId, improvement.evaluation);
     if (proposal) {
       const nextStatus = decision.decisionType === "revisit"
         ? "revisit_when"
@@ -260,13 +325,34 @@ export class TeamOrchestrator {
     this.graphMemory.link({
       sourceId: `/research/proposals/${result.proposalId}`,
       targetId: `/research/decisions/${decision.decisionId}`,
-      relationship: "decision_record",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.decisionRecord,
     });
     this.graphMemory.link({
       sourceId: resultPath,
       targetId: `/research/decisions/${decision.decisionId}`,
-      relationship: "decision_output",
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.decisionOutput,
     });
+    this.teamStore.transitionWorkflow(runId, "evaluating", "simulation completed and decision evaluation is running", {
+      metadata: {
+        experimentId: result.experimentId,
+      },
+    });
+    this.teamStore.transitionWorkflow(
+      runId,
+      decision.decisionType === "revisit" ? "revisit_due" : nextStatus === "failed" ? "failed" : "reported",
+      decision.decisionType === "revisit"
+        ? "evaluation requested revisit based on experiment outcome"
+        : nextStatus === "failed"
+          ? "simulation failed during workflow execution"
+          : "evaluation completed and report is ready",
+      {
+        metadata: {
+          experimentId: result.experimentId,
+          outcomeStatus: result.outcomeStatus,
+          decisionId: decision.decisionId,
+        },
+      },
+    );
     return this.teamStore.updateTeamRun(runId, {
       currentStage: "reporting",
       status: nextStatus,
@@ -284,6 +370,34 @@ export class TeamOrchestrator {
       currentStage: stage,
       status,
     });
+  }
+
+  rollbackRun(runId: string, reason: string): TeamRunRecord | null {
+    return this.teamStore.rollbackWorkflow(runId, reason);
+  }
+
+  configureAutomation(
+    runId: string,
+    updates: Partial<{
+      automationPolicy: AutomationPolicy;
+      checkpointPolicy: CheckpointPolicy;
+      retryPolicy: RetryPolicy;
+      timeoutPolicy: TimeoutPolicy;
+    }>,
+  ): TeamRunRecord | null {
+    return this.teamStore.configureAutomation(runId, updates);
+  }
+
+  checkpointRun(runId: string, reason: string, snapshot?: Record<string, unknown>): AutomationCheckpointRecord | null {
+    return this.teamStore.recordAutomationCheckpoint(runId, reason, snapshot);
+  }
+
+  resumeRunAutomation(runId: string, reason: string): TeamRunRecord | null {
+    return this.teamStore.resumeAutomation(runId, reason);
+  }
+
+  retryRunAutomation(runId: string, reason: string): TeamRunRecord | null {
+    return this.teamStore.recordAutomationRetry(runId, reason);
   }
 
   getRun(runId: string): TeamRunRecord | null {
@@ -307,7 +421,16 @@ export class TeamOrchestrator {
       `Current stage: ${run.currentStage}`,
       `Next stage: ${nextStage ?? run.currentStage}`,
       `Status: ${run.status}`,
+      `Workflow state: ${run.workflowState}`,
     ];
+
+    const workflowHistory = this.teamStore.listWorkflowTransitions(run.sessionId, run.id).slice(-5);
+    if (workflowHistory.length > 0) {
+      lines.push(
+        "Workflow history:",
+        ...workflowHistory.map((entry) => `- ${entry.fromState} -> ${entry.toState}: ${entry.reason}`),
+      );
+    }
 
     if (proposals.length > 0) {
       lines.push(

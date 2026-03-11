@@ -11,10 +11,13 @@ import type {
   ReconsiderationTrigger,
 } from "./contracts.js";
 
-const SCORE_VERSION = "v2";
+const SCORE_VERSION = "v3";
 
 export function buildProposalScorecard(brief: ProposalBrief): ProposalScorecard {
   const expectedGain = inferExpectedGain(brief.expectedGain);
+  const evidenceStrength = brief.claimSupport?.evidenceStrength ?? (brief.claimIds.length > 0 ? 0.55 : 0.2);
+  const evidenceFreshness = brief.claimSupport?.freshnessScore ?? (brief.claimIds.length > 0 ? 0.5 : 0.2);
+  const contradictionPressure = brief.claimSupport?.contradictionPressure ?? 0;
   const memoryRisk = inferRisk(brief.expectedRisk, ["memory", "oom", "ram", "gpu"]);
   const stabilityRisk = inferRisk(brief.expectedRisk, ["stability", "crash", "failure", "regression", "bug"]);
   const integrationCost = clamp01((brief.codeChangeScope.length * 0.2) + (brief.targetModules.length * 0.12));
@@ -22,31 +25,38 @@ export function buildProposalScorecard(brief: ProposalBrief): ProposalScorecard 
   const observabilityReadiness = clamp01((brief.stopConditions.length * 0.15) + (brief.reconsiderConditions.length * 0.12) + 0.3);
 
   const merit = clamp01(
-    expectedGain * 0.34 +
-    (1 - integrationCost) * 0.18 +
-    observabilityReadiness * 0.18 +
-    (1 - rollbackDifficulty) * 0.12 +
-    (brief.claimIds.length > 0 ? 0.18 : 0.08),
+    expectedGain * 0.24 +
+    evidenceStrength * 0.18 +
+    evidenceFreshness * 0.12 +
+    (1 - integrationCost) * 0.14 +
+    observabilityReadiness * 0.16 +
+    (1 - rollbackDifficulty) * 0.08 +
+    (brief.claimIds.length > 0 ? 0.08 : 0),
   );
 
   const risk = clamp01(
-    memoryRisk * 0.22 +
-    stabilityRisk * 0.28 +
-    integrationCost * 0.2 +
-    rollbackDifficulty * 0.15 +
-    (1 - observabilityReadiness) * 0.15,
+    contradictionPressure * 0.2 +
+    memoryRisk * 0.2 +
+    stabilityRisk * 0.22 +
+    integrationCost * 0.16 +
+    rollbackDifficulty * 0.12 +
+    (1 - observabilityReadiness) * 0.1,
   );
 
   const decisionScore = clamp01(merit * 0.6 + (1 - risk) * 0.4);
   const disagreementFlags: string[] = [];
   if (expectedGain >= 0.75 && stabilityRisk >= 0.6) disagreementFlags.push("high_gain_but_high_instability");
   if (observabilityReadiness < 0.4 && decisionScore >= 0.6) disagreementFlags.push("weak_observability_for_trial");
+  if (contradictionPressure >= 0.45 && evidenceStrength < 0.65) disagreementFlags.push("contradictory_evidence_pressure");
 
   return {
     proposalId: brief.proposalId,
     weightedScore: decisionScore,
     axisScores: {
       expected_gain: expectedGain,
+      evidence_strength: evidenceStrength,
+      evidence_freshness: evidenceFreshness,
+      contradiction_pressure: contradictionPressure,
       memory_risk: memoryRisk,
       stability_risk: stabilityRisk,
       integration_cost: integrationCost,
@@ -57,7 +67,7 @@ export function buildProposalScorecard(brief: ProposalBrief): ProposalScorecard 
     risk,
     decisionScore,
     evaluatorSummaries: [
-      `Expected gain ${expectedGain.toFixed(2)} with risk ${risk.toFixed(2)} and observability ${observabilityReadiness.toFixed(2)}.`,
+      `Expected gain ${expectedGain.toFixed(2)} with evidence ${evidenceStrength.toFixed(2)}, freshness ${evidenceFreshness.toFixed(2)}, contradiction pressure ${contradictionPressure.toFixed(2)}, and risk ${risk.toFixed(2)}.`,
       `Integration cost ${integrationCost.toFixed(2)} across ${brief.targetModules.length} target modules and ${brief.codeChangeScope.length} change scopes.`,
     ],
     disagreementFlags,
@@ -124,7 +134,14 @@ export function buildReconsiderationTriggers(decision: DecisionRecord, proposal:
   const conditions = proposal.reconsiderConditions.length > 0
     ? proposal.reconsiderConditions
     : defaultReconsiderationConditions(decision.reasonTags);
-  return conditions.slice(0, 3).map((condition, index) => ({
+  const augmentedConditions = [...conditions];
+  if ((proposal.claimSupport?.freshnessScore ?? 1) < 0.5) {
+    augmentedConditions.push("Revisit when fresher evidence replaces stale research inputs");
+  }
+  if ((proposal.claimSupport?.contradictionPressure ?? 0) >= 0.35) {
+    augmentedConditions.push("Revisit when contradiction pressure is resolved or stronger supporting evidence appears");
+  }
+  return dedupe(augmentedConditions).slice(0, 3).map((condition, index) => ({
     triggerId: nanoid(),
     decisionId: decision.decisionId,
     triggerType: inferTriggerType(condition),
@@ -159,7 +176,7 @@ export function evaluateReconsiderationTriggers<T extends ReconsiderationTrigger
       const matchesProposal = proposal.title.toLowerCase().split(/\W+/).some((token) => token.length > 4 && statement.includes(token));
 
       if (matchesEvidence || matchesMemory || matchesHardware || matchesMethod || matchesProposal) {
-        evidenceLinks.push(claim.claimId);
+        evidenceLinks.push(claim.canonicalClaimId ?? claim.claimId);
       }
     }
 
@@ -193,6 +210,12 @@ export function buildDecisionDrift(
   const notes: string[] = [];
   if (confidenceGap !== undefined && Math.abs(confidenceGap) >= 0.15) {
     notes.push(`confidence_gap=${confidenceGap.toFixed(2)}`);
+  }
+  if (scorecard?.axisScores.evidence_freshness !== undefined && scorecard.axisScores.evidence_freshness < 0.5) {
+    notes.push(`freshness_drift=${scorecard.axisScores.evidence_freshness.toFixed(2)}`);
+  }
+  if (scorecard?.axisScores.contradiction_pressure !== undefined && scorecard.axisScores.contradiction_pressure >= 0.35) {
+    notes.push(`contradiction_pressure=${scorecard.axisScores.contradiction_pressure.toFixed(2)}`);
   }
   if (proposalDecision && proposalDecision.decisionType !== finalDecision.decisionType) {
     notes.push(`${proposalDecision.decisionType}->${finalDecision.decisionType}`);
@@ -232,11 +255,13 @@ function classifyResultDecision(outcome: ExperimentResult["outcomeStatus"]): Dec
 function classifyProposalReasonTags(scorecard: ProposalScorecard, decisionType: DecisionType): DecisionReasonTag[] {
   const tags: DecisionReasonTag[] = [];
   if (scorecard.axisScores.expected_gain >= 0.7) tags.push("high_expected_gain");
+  if (scorecard.axisScores.evidence_strength < 0.45) tags.push("low_confidence_evidence");
   if (scorecard.axisScores.memory_risk >= 0.55) tags.push("memory_risk");
   if (scorecard.axisScores.integration_cost >= 0.55) tags.push("integration_complexity");
   if (scorecard.axisScores.rollback_difficulty >= 0.55) tags.push("rollback_difficulty");
   if (scorecard.axisScores.observability_readiness < 0.45) tags.push("observability_gap");
   if (decisionType !== "trial" && scorecard.decisionScore < 0.62) tags.push("insufficient_gain");
+  if (scorecard.axisScores.contradiction_pressure >= 0.45) tags.push("decision_drift");
   if (decisionType === "defer") tags.push("needs_more_evidence");
   return dedupe(tags);
 }

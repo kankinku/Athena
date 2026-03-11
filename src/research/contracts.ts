@@ -2,6 +2,19 @@ export type TeamStage = "collection" | "planning" | "simulation" | "reporting";
 
 export type TeamRunStatus = "active" | "completed" | "failed" | "cancelled";
 
+export type AutomationMode = "manual" | "assisted" | "supervised-auto" | "overnight-auto";
+
+export type ResearchWorkflowState =
+  | "draft"
+  | "ready"
+  | "approved"
+  | "running"
+  | "evaluating"
+  | "reported"
+  | "revisit_due"
+  | "archived"
+  | "failed";
+
 export type ProposalStatus =
   | "candidate"
   | "ready_for_experiment"
@@ -69,6 +82,9 @@ export interface ProposalScorecard extends MeritRiskScore {
   weightedScore: number;
   axisScores: {
     expected_gain: number;
+    evidence_strength: number;
+    evidence_freshness: number;
+    contradiction_pressure: number;
     memory_risk: number;
     stability_risk: number;
     integration_cost: number;
@@ -78,6 +94,15 @@ export interface ProposalScorecard extends MeritRiskScore {
   evaluatorSummaries: string[];
   disagreementFlags: string[];
   scoreVersion: string;
+}
+
+export interface ClaimSupportSummary {
+  claimIds: string[];
+  sourceCoverage: number;
+  evidenceStrength: number;
+  freshnessScore: number;
+  contradictionPressure: number;
+  unresolvedClaims: string[];
 }
 
 export interface DecisionDriftRecord {
@@ -99,6 +124,10 @@ export interface CalibrationSummary {
 
 export interface ExtractedClaim {
   claimId: string;
+  sourceClaimId?: string;
+  canonicalClaimId?: string;
+  semanticKey?: string;
+  normalizedStatement?: string;
   statement: string;
   evidenceIds?: string[];
   confidence?: number;
@@ -117,6 +146,7 @@ export interface GraphNodeRecord {
   kind:
     | "document"
     | "claim"
+    | "source_claim"
     | "method"
     | "evidence"
     | "constraint"
@@ -152,6 +182,7 @@ export interface ResearchCandidatePack {
   problemArea: string;
   documents: string[];
   claims: ExtractedClaim[];
+  canonicalClaims?: CanonicalClaim[];
   methods: string[];
   normalizedMethods?: string[];
   counterEvidence: string[];
@@ -160,6 +191,21 @@ export interface ResearchCandidatePack {
   evidenceConfidence?: number;
   contradictions?: string[];
   openQuestions?: string[];
+}
+
+export interface CanonicalClaim {
+  canonicalClaimId: string;
+  semanticKey: string;
+  statement: string;
+  normalizedStatement: string;
+  primaryMethodTag?: string;
+  sourceClaimIds: string[];
+  evidenceIds: string[];
+  supportTags: string[];
+  contradictionTags: string[];
+  confidence?: number;
+  freshnessScore?: number;
+  sourceIds: string[];
 }
 
 export interface ProposalBrief {
@@ -177,6 +223,7 @@ export interface ProposalBrief {
   stopConditions: string[];
   reconsiderConditions: string[];
   claimIds: string[];
+  claimSupport?: ClaimSupportSummary;
 }
 
 export interface DecisionRecord {
@@ -280,6 +327,7 @@ export interface IngestionSourceRecord {
   evidenceConfidence?: number;
   methodTags?: string[];
   extractedClaims?: ExtractedClaim[];
+  canonicalClaims?: CanonicalClaim[];
   createdAt: number;
   updatedAt: number;
 }
@@ -299,8 +347,114 @@ export interface TeamRunRecord {
   goal: string;
   currentStage: TeamStage;
   status: TeamRunStatus;
+  workflowState: ResearchWorkflowState;
+  automationPolicy: AutomationPolicy;
+  checkpointPolicy: CheckpointPolicy;
+  retryPolicy: RetryPolicy;
+  timeoutPolicy: TimeoutPolicy;
+  automationState: AutomationRuntimeState;
   budget?: ExperimentBudget;
   latestOutput?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface WorkflowTransitionRecord {
+  transitionId: string;
+  runId: string;
+  fromState: ResearchWorkflowState;
+  toState: ResearchWorkflowState;
+  reason: string;
+  rollbackOfTransitionId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface AutomationPolicy {
+  mode: AutomationMode;
+  requireProposalApproval: boolean;
+  requireExperimentApproval: boolean;
+  requireRevisitApproval: boolean;
+  maxAutoExperiments: number;
+}
+
+export interface CheckpointPolicy {
+  intervalMinutes: number;
+  onWorkflowStates: ResearchWorkflowState[];
+}
+
+export interface RetryPolicy {
+  maxRetries: number;
+  retryOn: ExperimentOutcomeStatus[];
+}
+
+export interface TimeoutPolicy {
+  maxRunMinutes: number;
+  maxStageMinutes?: number;
+}
+
+export interface AutomationRuntimeState {
+  retryCount: number;
+  resumeCount: number;
+  lastCheckpointAt?: number;
+  lastCheckpointReason?: string;
+  timeoutAt?: number;
+  nextCheckpointAt?: number;
+}
+
+export interface AutomationCheckpointRecord {
+  checkpointId: string;
+  runId: string;
+  workflowState: ResearchWorkflowState;
+  stage: TeamStage;
+  reason: string;
+  snapshot?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export type ImprovementTargetArea =
+  | "automation_policy"
+  | "workflow_guardrail"
+  | "evaluation_strategy"
+  | "decision_policy"
+  | "reporting_quality"
+  | "research_strategy";
+
+export type ImprovementProposalStatus = "proposed" | "approved" | "evaluated" | "rolled_back" | "rejected";
+
+export type ImprovementEvaluationOutcome = "promising" | "neutral" | "regressive" | "rollback_required";
+
+export type ImprovementReviewStatus = "queued" | "in_review" | "promoted" | "dismissed";
+
+export interface ImprovementProposalRecord {
+  improvementId: string;
+  runId: string;
+  proposalId?: string;
+  experimentId?: string;
+  mergeKey: string;
+  title: string;
+  targetArea: ImprovementTargetArea;
+  hypothesis: string;
+  rationale: string;
+  expectedBenefit: string;
+  priorityScore: number;
+  reviewStatus: ImprovementReviewStatus;
+  rollbackPlan: string;
+  status: ImprovementProposalStatus;
+  sourceDecisionId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ImprovementEvaluationRecord {
+  evaluationId: string;
+  improvementId?: string;
+  runId: string;
+  experimentId?: string;
+  outcome: ImprovementEvaluationOutcome;
+  summary: string;
+  recommendedAction: string;
+  rollbackRequired: boolean;
+  metricDeltaSummary: string;
+  createdAt: number;
 }

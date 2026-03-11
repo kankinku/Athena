@@ -56,6 +56,8 @@ test("analyzeRunForImprovement creates rollback-oriented evaluation for crashes"
 
   assert.equal(analysis.proposal?.targetArea, "workflow_guardrail");
   assert.equal(analysis.proposal?.rollbackPlan, "Revert the optimizer patch");
+  assert.ok(typeof analysis.proposal?.priorityScore === "number");
+  assert.equal(analysis.proposal?.reviewStatus, "queued");
   assert.equal(analysis.evaluation.outcome, "rollback_required");
   assert.equal(analysis.evaluation.rollbackRequired, true);
 });
@@ -80,6 +82,7 @@ test("analyzeRunForImprovement approves reusable strategy for successful runs", 
 
   assert.equal(analysis.proposal?.status, "approved");
   assert.equal(analysis.proposal?.targetArea, "research_strategy");
+  assert.match(analysis.proposal?.mergeKey ?? "", /research_strategy::proposal-1::keep/);
   assert.equal(analysis.evaluation.outcome, "promising");
   assert.match(analysis.evaluation.metricDeltaSummary, /accuracy=0.1100/);
 });

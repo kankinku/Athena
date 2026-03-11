@@ -289,7 +289,89 @@ const migrations: Migration[] = [
       ALTER TABLE ingestion_sources ADD COLUMN freshness_score REAL;
       ALTER TABLE ingestion_sources ADD COLUMN evidence_confidence REAL;
       ALTER TABLE ingestion_sources ADD COLUMN method_tags_json TEXT;
-      ALTER TABLE ingestion_sources ADD COLUMN claims_json TEXT;
+       ALTER TABLE ingestion_sources ADD COLUMN claims_json TEXT;
+    `,
+  },
+  {
+    version: 9,
+    sql: `
+      ALTER TABLE ingestion_sources ADD COLUMN canonical_claims_json TEXT;
+    `,
+  },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE team_runs ADD COLUMN workflow_state TEXT NOT NULL DEFAULT 'draft';
+
+      CREATE TABLE IF NOT EXISTS workflow_transitions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        from_state TEXT NOT NULL,
+        to_state TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        rollback_of_transition_id TEXT,
+        metadata_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_transitions_run
+        ON workflow_transitions(session_id, run_id, created_at);
+    `,
+  },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE team_runs ADD COLUMN automation_policy_json TEXT;
+      ALTER TABLE team_runs ADD COLUMN checkpoint_policy_json TEXT;
+      ALTER TABLE team_runs ADD COLUMN retry_policy_json TEXT;
+      ALTER TABLE team_runs ADD COLUMN timeout_policy_json TEXT;
+      ALTER TABLE team_runs ADD COLUMN automation_state_json TEXT;
+
+      CREATE TABLE IF NOT EXISTS automation_checkpoints (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        workflow_state TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        snapshot_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_automation_checkpoints_run
+        ON automation_checkpoints(session_id, run_id, created_at);
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS improvement_proposals (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        proposal_id TEXT,
+        experiment_id TEXT,
+        title TEXT NOT NULL,
+        target_area TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_improvement_proposals_run
+        ON improvement_proposals(session_id, run_id, updated_at);
+
+      CREATE TABLE IF NOT EXISTS improvement_evaluations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        improvement_id TEXT,
+        run_id TEXT NOT NULL,
+        experiment_id TEXT,
+        outcome TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_improvement_evaluations_run
+        ON improvement_evaluations(session_id, run_id, created_at);
     `,
   },
 ];

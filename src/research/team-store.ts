@@ -1,20 +1,32 @@
 import { nanoid } from "nanoid";
 import { getDb } from "../store/database.js";
 import type {
+  AutomationCheckpointRecord,
+  AutomationPolicy,
+  AutomationRuntimeState,
   BudgetAnomalyRecord,
+  CheckpointPolicy,
+  ClaimSupportSummary,
   DecisionRecord,
   ExperimentLineageRecord,
   ExperimentBudget,
   ExperimentCharter,
   ExperimentResult,
   IngestionSourceRecord,
+  ImprovementEvaluationRecord,
+  ImprovementProposalRecord,
   ProposalBrief,
   ProposalScorecard,
   ReconsiderationTrigger,
   TeamRunRecord,
   TeamRunStatus,
   TeamStage,
+  TimeoutPolicy,
+  WorkflowTransitionRecord,
+  RetryPolicy,
 } from "./contracts.js";
+import { resolveCanonicalClaimReference } from "./claim-graph.js";
+import { assertValidWorkflowTransition, canRollbackWorkflowState } from "./workflow-state.js";
 
 interface TeamRunRow {
   id: string;
@@ -22,6 +34,12 @@ interface TeamRunRow {
   goal: string;
   current_stage: TeamStage;
   status: TeamRunStatus;
+  workflow_state: TeamRunRecord["workflowState"];
+  automation_policy_json: string | null;
+  checkpoint_policy_json: string | null;
+  retry_policy_json: string | null;
+  timeout_policy_json: string | null;
+  automation_state_json: string | null;
   budget_json: string | null;
   latest_output_json: string | null;
   created_at: number;
@@ -50,15 +68,26 @@ export class TeamStore {
     const db = getDb();
     const id = nanoid();
     const now = Date.now();
+    const automationPolicy = defaultAutomationPolicy();
+    const checkpointPolicy = defaultCheckpointPolicy();
+    const retryPolicy = defaultRetryPolicy();
+    const timeoutPolicy = defaultTimeoutPolicy();
+    const automationState = defaultAutomationState(now, checkpointPolicy, timeoutPolicy);
     db.prepare(
-      `INSERT INTO team_runs (id, session_id, goal, current_stage, status, budget_json, latest_output_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO team_runs (id, session_id, goal, current_stage, status, workflow_state, automation_policy_json, checkpoint_policy_json, retry_policy_json, timeout_policy_json, automation_state_json, budget_json, latest_output_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       sessionId,
       goal,
       "collection",
       "active",
+      "draft",
+      JSON.stringify(automationPolicy),
+      JSON.stringify(checkpointPolicy),
+      JSON.stringify(retryPolicy),
+      JSON.stringify(timeoutPolicy),
+      JSON.stringify(automationState),
       budget ? JSON.stringify(budget) : null,
       null,
       now,
@@ -71,6 +100,12 @@ export class TeamStore {
       goal,
       currentStage: "collection",
       status: "active",
+      workflowState: "draft",
+      automationPolicy,
+      checkpointPolicy,
+      retryPolicy,
+      timeoutPolicy,
+      automationState,
       budget,
       createdAt: now,
       updatedAt: now,
@@ -88,6 +123,12 @@ export class TeamStore {
     updates: {
       currentStage?: TeamStage;
       status?: TeamRunStatus;
+      workflowState?: TeamRunRecord["workflowState"];
+      automationPolicy?: AutomationPolicy;
+      checkpointPolicy?: CheckpointPolicy;
+      retryPolicy?: RetryPolicy;
+      timeoutPolicy?: TimeoutPolicy;
+      automationState?: AutomationRuntimeState;
       latestOutput?: Record<string, unknown>;
       budget?: ExperimentBudget;
     },
@@ -100,6 +141,12 @@ export class TeamStore {
       ...current,
       currentStage: updates.currentStage ?? current.currentStage,
       status: updates.status ?? current.status,
+      workflowState: updates.workflowState ?? current.workflowState,
+      automationPolicy: updates.automationPolicy ?? current.automationPolicy,
+      checkpointPolicy: updates.checkpointPolicy ?? current.checkpointPolicy,
+      retryPolicy: updates.retryPolicy ?? current.retryPolicy,
+      timeoutPolicy: updates.timeoutPolicy ?? current.timeoutPolicy,
+      automationState: updates.automationState ?? current.automationState,
       latestOutput: updates.latestOutput ?? current.latestOutput,
       budget: updates.budget ?? current.budget,
       updatedAt: Date.now(),
@@ -107,11 +154,17 @@ export class TeamStore {
 
     db.prepare(
       `UPDATE team_runs
-       SET current_stage = ?, status = ?, budget_json = ?, latest_output_json = ?, updated_at = ?
+       SET current_stage = ?, status = ?, workflow_state = ?, automation_policy_json = ?, checkpoint_policy_json = ?, retry_policy_json = ?, timeout_policy_json = ?, automation_state_json = ?, budget_json = ?, latest_output_json = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.currentStage,
       next.status,
+      next.workflowState,
+      JSON.stringify(next.automationPolicy),
+      JSON.stringify(next.checkpointPolicy),
+      JSON.stringify(next.retryPolicy),
+      JSON.stringify(next.timeoutPolicy),
+      JSON.stringify(next.automationState),
       next.budget ? JSON.stringify(next.budget) : null,
       next.latestOutput ? JSON.stringify(next.latestOutput) : null,
       next.updatedAt,
@@ -119,6 +172,281 @@ export class TeamStore {
     );
 
     return next;
+  }
+
+  transitionWorkflow(
+    runId: string,
+    toState: TeamRunRecord["workflowState"],
+    reason: string,
+    options: { rollbackOfTransitionId?: string; metadata?: Record<string, unknown> } = {},
+  ): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    assertValidWorkflowTransition(run.workflowState, toState);
+    const next = this.updateTeamRun(runId, {
+      workflowState: toState,
+      status: toState === "failed"
+        ? "failed"
+        : toState === "archived"
+          ? "completed"
+          : run.status,
+    });
+    if (!next) return null;
+    this.saveWorkflowTransition(run.sessionId, {
+      transitionId: nanoid(),
+      runId,
+      fromState: run.workflowState,
+      toState,
+      reason,
+      rollbackOfTransitionId: options.rollbackOfTransitionId,
+      metadata: options.metadata,
+      createdAt: Date.now(),
+    });
+    return next;
+  }
+
+  rollbackWorkflow(runId: string, reason: string): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    const history = this.listWorkflowTransitions(run.sessionId, runId);
+    const target = [...history].reverse().find((entry) => canRollbackWorkflowState(entry.fromState));
+    if (!target) return null;
+    const next = this.updateTeamRun(runId, {
+      workflowState: target.fromState,
+      status: "active",
+    });
+    if (!next) return null;
+    this.saveWorkflowTransition(run.sessionId, {
+      transitionId: nanoid(),
+      runId,
+      fromState: run.workflowState,
+      toState: target.fromState,
+      reason,
+      rollbackOfTransitionId: target.transitionId,
+      metadata: { rollback: true },
+      createdAt: Date.now(),
+    });
+    return next;
+  }
+
+  configureAutomation(
+    runId: string,
+    updates: Partial<Pick<TeamRunRecord, "automationPolicy" | "checkpointPolicy" | "retryPolicy" | "timeoutPolicy">>,
+  ): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    const checkpointPolicy = updates.checkpointPolicy ?? run.checkpointPolicy;
+    const timeoutPolicy = updates.timeoutPolicy ?? run.timeoutPolicy;
+    return this.updateTeamRun(runId, {
+      automationPolicy: updates.automationPolicy ?? run.automationPolicy,
+      checkpointPolicy,
+      retryPolicy: updates.retryPolicy ?? run.retryPolicy,
+      timeoutPolicy,
+      automationState: {
+        ...run.automationState,
+        timeoutAt: timeoutPolicy.maxRunMinutes > 0
+          ? run.createdAt + (timeoutPolicy.maxRunMinutes * 60_000)
+          : undefined,
+        nextCheckpointAt: checkpointPolicy.intervalMinutes > 0
+          ? Date.now() + (checkpointPolicy.intervalMinutes * 60_000)
+          : undefined,
+      },
+    });
+  }
+
+  saveAutomationCheckpoint(sessionId: string, checkpoint: AutomationCheckpointRecord): AutomationCheckpointRecord {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO automation_checkpoints (
+         id, run_id, session_id, workflow_state, stage, reason, snapshot_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      checkpoint.checkpointId,
+      checkpoint.runId,
+      sessionId,
+      checkpoint.workflowState,
+      checkpoint.stage,
+      checkpoint.reason,
+      checkpoint.snapshot ? JSON.stringify(checkpoint.snapshot) : null,
+      checkpoint.createdAt,
+    );
+    return checkpoint;
+  }
+
+  listAutomationCheckpoints(sessionId: string, runId: string): AutomationCheckpointRecord[] {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT * FROM automation_checkpoints
+       WHERE session_id = ? AND run_id = ?
+       ORDER BY created_at ASC`,
+    ).all(sessionId, runId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      checkpointId: row.id as string,
+      runId: row.run_id as string,
+      workflowState: row.workflow_state as AutomationCheckpointRecord["workflowState"],
+      stage: row.stage as AutomationCheckpointRecord["stage"],
+      reason: row.reason as string,
+      snapshot: row.snapshot_json ? (JSON.parse(row.snapshot_json as string) as Record<string, unknown>) : undefined,
+      createdAt: row.created_at as number,
+    }));
+  }
+
+  saveImprovementProposal(sessionId: string, proposal: ImprovementProposalRecord): ImprovementProposalRecord {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO improvement_proposals (
+         id, session_id, run_id, proposal_id, experiment_id, title, target_area, status, payload_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         status = excluded.status,
+         payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at`,
+    ).run(
+      proposal.improvementId,
+      sessionId,
+      proposal.runId,
+      proposal.proposalId ?? null,
+      proposal.experimentId ?? null,
+      proposal.title,
+      proposal.targetArea,
+      proposal.status,
+      JSON.stringify(proposal),
+      proposal.createdAt,
+      proposal.updatedAt,
+    );
+    return proposal;
+  }
+
+  listImprovementProposals(sessionId: string, runId?: string): ImprovementProposalRecord[] {
+    const db = getDb();
+    const rows = runId
+      ? db.prepare(`SELECT payload_json FROM improvement_proposals WHERE session_id = ? AND run_id = ? ORDER BY updated_at DESC`).all(sessionId, runId)
+      : db.prepare(`SELECT payload_json FROM improvement_proposals WHERE session_id = ? ORDER BY updated_at DESC`).all(sessionId);
+    return (rows as Array<Record<string, unknown>>).map((row) => JSON.parse(row.payload_json as string) as ImprovementProposalRecord);
+  }
+
+  saveImprovementEvaluation(sessionId: string, evaluation: ImprovementEvaluationRecord): ImprovementEvaluationRecord {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO improvement_evaluations (
+         id, session_id, improvement_id, run_id, experiment_id, outcome, payload_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      evaluation.evaluationId,
+      sessionId,
+      evaluation.improvementId ?? null,
+      evaluation.runId,
+      evaluation.experimentId ?? null,
+      evaluation.outcome,
+      JSON.stringify(evaluation),
+      evaluation.createdAt,
+    );
+    return evaluation;
+  }
+
+  listImprovementEvaluations(sessionId: string, runId?: string): ImprovementEvaluationRecord[] {
+    const db = getDb();
+    const rows = runId
+      ? db.prepare(`SELECT payload_json FROM improvement_evaluations WHERE session_id = ? AND run_id = ? ORDER BY created_at DESC`).all(sessionId, runId)
+      : db.prepare(`SELECT payload_json FROM improvement_evaluations WHERE session_id = ? ORDER BY created_at DESC`).all(sessionId);
+    return (rows as Array<Record<string, unknown>>).map((row) => JSON.parse(row.payload_json as string) as ImprovementEvaluationRecord);
+  }
+
+  recordAutomationCheckpoint(runId: string, reason: string, snapshot?: Record<string, unknown>): AutomationCheckpointRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    const now = Date.now();
+    this.updateTeamRun(runId, {
+      automationState: {
+        ...run.automationState,
+        lastCheckpointAt: now,
+        lastCheckpointReason: reason,
+        nextCheckpointAt: run.checkpointPolicy.intervalMinutes > 0
+          ? now + (run.checkpointPolicy.intervalMinutes * 60_000)
+          : undefined,
+      },
+    });
+    return this.saveAutomationCheckpoint(run.sessionId, {
+      checkpointId: nanoid(),
+      runId,
+      workflowState: run.workflowState,
+      stage: run.currentStage,
+      reason,
+      snapshot,
+      createdAt: now,
+    });
+  }
+
+  resumeAutomation(runId: string, reason: string): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    return this.updateTeamRun(runId, {
+      automationState: {
+        ...run.automationState,
+        resumeCount: run.automationState.resumeCount + 1,
+      },
+      latestOutput: {
+        ...(run.latestOutput ?? {}),
+        resumeReason: reason,
+      },
+      status: "active",
+    });
+  }
+
+  recordAutomationRetry(runId: string, reason: string): TeamRunRecord | null {
+    const run = this.getTeamRun(runId);
+    if (!run) return null;
+    const retryCount = Math.min(run.retryPolicy.maxRetries, run.automationState.retryCount + 1);
+    return this.updateTeamRun(runId, {
+      automationState: {
+        ...run.automationState,
+        retryCount,
+      },
+      latestOutput: {
+        ...(run.latestOutput ?? {}),
+        retryReason: reason,
+        retryCount,
+      },
+    });
+  }
+
+  saveWorkflowTransition(sessionId: string, transition: WorkflowTransitionRecord): WorkflowTransitionRecord {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO workflow_transitions (
+         id, run_id, session_id, from_state, to_state, reason, rollback_of_transition_id, metadata_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      transition.transitionId,
+      transition.runId,
+      sessionId,
+      transition.fromState,
+      transition.toState,
+      transition.reason,
+      transition.rollbackOfTransitionId ?? null,
+      transition.metadata ? JSON.stringify(transition.metadata) : null,
+      transition.createdAt,
+    );
+    return transition;
+  }
+
+  listWorkflowTransitions(sessionId: string, runId: string): WorkflowTransitionRecord[] {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT * FROM workflow_transitions
+       WHERE session_id = ? AND run_id = ?
+       ORDER BY created_at ASC`,
+    ).all(sessionId, runId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      transitionId: row.id as string,
+      runId: row.run_id as string,
+      fromState: row.from_state as WorkflowTransitionRecord["fromState"],
+      toState: row.to_state as WorkflowTransitionRecord["toState"],
+      reason: row.reason as string,
+      rollbackOfTransitionId: (row.rollback_of_transition_id as string | null) ?? undefined,
+      metadata: row.metadata_json ? (JSON.parse(row.metadata_json as string) as Record<string, unknown>) : undefined,
+      createdAt: row.created_at as number,
+    }));
   }
 
   saveProposalBrief(sessionId: string, brief: ProposalBrief): ProposalBrief {
@@ -413,10 +741,10 @@ export class TeamStore {
       `INSERT INTO ingestion_sources (
          id, session_id, source_type, title, url, status, extracted_candidate_id, notes,
          claim_count, linked_proposal_count, freshness_score, evidence_confidence,
-         method_tags_json, claims_json, created_at, updated_at
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
+          method_tags_json, claims_json, canonical_claims_json, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
           status = excluded.status,
           extracted_candidate_id = excluded.extracted_candidate_id,
           notes = excluded.notes,
@@ -426,6 +754,7 @@ export class TeamStore {
           evidence_confidence = excluded.evidence_confidence,
           method_tags_json = excluded.method_tags_json,
           claims_json = excluded.claims_json,
+          canonical_claims_json = excluded.canonical_claims_json,
           updated_at = excluded.updated_at`,
     ).run(
       source.sourceId,
@@ -442,6 +771,7 @@ export class TeamStore {
       source.evidenceConfidence ?? null,
       source.methodTags ? JSON.stringify(source.methodTags) : null,
       source.extractedClaims ? JSON.stringify(source.extractedClaims) : null,
+      source.canonicalClaims ? JSON.stringify(source.canonicalClaims) : null,
       source.createdAt,
       source.updatedAt,
     );
@@ -469,6 +799,9 @@ export class TeamStore {
       extractedClaims: row.claims_json
         ? (JSON.parse(row.claims_json as string) as IngestionSourceRecord["extractedClaims"])
         : undefined,
+      canonicalClaims: row.canonical_claims_json
+        ? (JSON.parse(row.canonical_claims_json as string) as IngestionSourceRecord["canonicalClaims"])
+        : undefined,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     }));
@@ -476,6 +809,33 @@ export class TeamStore {
 
   getProposalBrief(sessionId: string, proposalId: string): ProposalBrief | null {
     return this.listProposalBriefs(sessionId).find((brief) => brief.proposalId === proposalId) ?? null;
+  }
+
+  summarizeClaims(sessionId: string, claimIds: string[]): ClaimSupportSummary {
+    const normalizedIds = claimIds.map((claimId) => resolveCanonicalClaimReference(claimId));
+    const canonicalClaims = this.listIngestionSources(sessionId)
+      .flatMap((source) => source.canonicalClaims ?? [])
+      .filter((claim) => normalizedIds.includes(resolveCanonicalClaimReference(claim.canonicalClaimId)));
+
+    const evidenceStrength = average(canonicalClaims.map((claim) => claim.confidence));
+    const freshnessScore = average(canonicalClaims.map((claim) => claim.freshnessScore));
+    const contradictionPressure = average(canonicalClaims.map((claim) => {
+      const contradictionCount = claim.contradictionTags.length;
+      const supportCount = Math.max(1, claim.supportTags.length + claim.evidenceIds.length);
+      return contradictionCount === 0 ? 0 : Math.min(1, contradictionCount / supportCount);
+    }));
+    const sourceCoverage = canonicalClaims.length === 0
+      ? 0
+      : average(canonicalClaims.map((claim) => Math.min(1, claim.sourceIds.length / 3)));
+
+    return {
+      claimIds: normalizedIds,
+      sourceCoverage,
+      evidenceStrength,
+      freshnessScore,
+      contradictionPressure,
+      unresolvedClaims: normalizedIds.filter((claimId) => !canonicalClaims.some((claim) => resolveCanonicalClaimReference(claim.canonicalClaimId) === claimId)),
+    };
   }
 
   updateProposalBrief(sessionId: string, proposalId: string, updates: Partial<ProposalBrief>): ProposalBrief | null {
@@ -655,6 +1015,22 @@ function mapTeamRun(row: TeamRunRow): TeamRunRecord {
     goal: row.goal,
     currentStage: row.current_stage,
     status: row.status,
+    workflowState: row.workflow_state,
+    automationPolicy: row.automation_policy_json
+      ? (JSON.parse(row.automation_policy_json) as AutomationPolicy)
+      : defaultAutomationPolicy(),
+    checkpointPolicy: row.checkpoint_policy_json
+      ? (JSON.parse(row.checkpoint_policy_json) as CheckpointPolicy)
+      : defaultCheckpointPolicy(),
+    retryPolicy: row.retry_policy_json
+      ? (JSON.parse(row.retry_policy_json) as RetryPolicy)
+      : defaultRetryPolicy(),
+    timeoutPolicy: row.timeout_policy_json
+      ? (JSON.parse(row.timeout_policy_json) as TimeoutPolicy)
+      : defaultTimeoutPolicy(),
+    automationState: row.automation_state_json
+      ? (JSON.parse(row.automation_state_json) as AutomationRuntimeState)
+      : defaultAutomationState(row.created_at, defaultCheckpointPolicy(), defaultTimeoutPolicy()),
     budget: row.budget_json ? (JSON.parse(row.budget_json) as ExperimentBudget) : undefined,
     latestOutput: row.latest_output_json
       ? (JSON.parse(row.latest_output_json) as Record<string, unknown>)
@@ -662,4 +1038,58 @@ function mapTeamRun(row: TeamRunRow): TeamRunRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function defaultAutomationPolicy(): AutomationPolicy {
+  return {
+    mode: "manual",
+    requireProposalApproval: true,
+    requireExperimentApproval: true,
+    requireRevisitApproval: true,
+    maxAutoExperiments: 1,
+  };
+}
+
+function defaultCheckpointPolicy(): CheckpointPolicy {
+  return {
+    intervalMinutes: 30,
+    onWorkflowStates: ["running", "evaluating", "revisit_due"],
+  };
+}
+
+function defaultRetryPolicy(): RetryPolicy {
+  return {
+    maxRetries: 2,
+    retryOn: ["budget_exceeded", "inconclusive", "shadow_win"],
+  };
+}
+
+function defaultTimeoutPolicy(): TimeoutPolicy {
+  return {
+    maxRunMinutes: 480,
+    maxStageMinutes: 120,
+  };
+}
+
+function defaultAutomationState(
+  createdAt: number,
+  checkpointPolicy: CheckpointPolicy,
+  timeoutPolicy: TimeoutPolicy,
+): AutomationRuntimeState {
+  return {
+    retryCount: 0,
+    resumeCount: 0,
+    timeoutAt: timeoutPolicy.maxRunMinutes > 0
+      ? createdAt + (timeoutPolicy.maxRunMinutes * 60_000)
+      : undefined,
+    nextCheckpointAt: checkpointPolicy.intervalMinutes > 0
+      ? createdAt + (checkpointPolicy.intervalMinutes * 60_000)
+      : undefined,
+  };
+}
+
+function average(values: Array<number | undefined>): number {
+  const valid = values.filter((value): value is number => typeof value === "number");
+  if (valid.length === 0) return 0;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
 }

@@ -6,6 +6,12 @@ import type {
   KnowledgeSubgraph,
   ResearchCandidatePack,
 } from "../research/contracts.js";
+import {
+  buildCanonicalClaimPath,
+  buildSourceClaimPath,
+  CLAIM_GRAPH_RELATIONSHIPS,
+} from "../research/claim-graph.js";
+import { buildCanonicalClaims } from "../research/ingestion.js";
 
 type EdgeDirection = "outgoing" | "incoming" | "both";
 
@@ -192,36 +198,48 @@ export class GraphMemory {
     this.memory.write(packPath, pack.problemArea, JSON.stringify(pack, null, 2));
 
     const rootIds = [packPath];
+    const canonicalClaims = pack.canonicalClaims ?? buildCanonicalClaims(pack.claims);
+
+    for (const canonicalClaim of canonicalClaims) {
+      const canonicalPath = buildCanonicalClaimPath(canonicalClaim.canonicalClaimId);
+      this.memory.write(canonicalPath, canonicalClaim.statement, JSON.stringify(canonicalClaim, null, 2));
+      this.link({
+        sourceId: packPath,
+        targetId: canonicalPath,
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.citesClaim,
+      });
+      rootIds.push(canonicalPath);
+    }
 
     for (const claim of pack.claims) {
-      const claimPath = `${packPath}/claims/${claim.claimId}`;
+      const claimPath = buildSourceClaimPath(pack.candidateId, claim.sourceClaimId ?? claim.claimId);
       this.memory.write(claimPath, claim.statement, JSON.stringify(claim, null, 2));
       this.link({
         sourceId: packPath,
         targetId: claimPath,
-        relationship: "contains_claim",
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.containsClaim,
       });
+      if (claim.canonicalClaimId) {
+        this.link({
+          sourceId: claimPath,
+          targetId: buildCanonicalClaimPath(claim.canonicalClaimId),
+          relationship: CLAIM_GRAPH_RELATIONSHIPS.canonicalizedAs,
+          metadata: {
+            semanticKey: claim.semanticKey,
+            normalizedStatement: claim.normalizedStatement,
+          },
+        });
+      }
       for (const evidenceId of claim.evidenceIds ?? []) {
         const evidencePath = `${packPath}/evidence/${evidenceId}`;
         this.memory.write(evidencePath, evidenceId, JSON.stringify({ evidenceId, claimId: claim.claimId }, null, 2));
         this.link({
-          sourceId: claimPath,
+          sourceId: claim.canonicalClaimId ? buildCanonicalClaimPath(claim.canonicalClaimId) : claimPath,
           targetId: evidencePath,
-          relationship: "supported_by",
-        });
-      }
-      for (const tag of claim.supportTags ?? []) {
-        this.link({
-          sourceId: claimPath,
-          targetId: packPath,
-          relationship: `supports:${tag}`,
-        });
-      }
-      for (const tag of claim.contradictionTags ?? []) {
-        this.link({
-          sourceId: claimPath,
-          targetId: packPath,
-          relationship: `contradicted_by:${tag}`,
+          relationship: CLAIM_GRAPH_RELATIONSHIPS.supportedBy,
+          metadata: {
+            sourceClaimId: claim.sourceClaimId ?? claim.claimId,
+          },
         });
       }
       rootIds.push(claimPath);
@@ -233,7 +251,7 @@ export class GraphMemory {
       this.link({
         sourceId: packPath,
         targetId: methodPath,
-        relationship: "proposes_method",
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.proposesMethod,
       });
     }
 
@@ -243,7 +261,7 @@ export class GraphMemory {
       this.link({
         sourceId: packPath,
         targetId: contradictionPath,
-        relationship: "has_counter_evidence",
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.hasCounterEvidence,
       });
     }
 
@@ -253,7 +271,7 @@ export class GraphMemory {
   listNodesByKind(kind: GraphNodeRecord["kind"]): GraphNodeRecord[] {
     return this.memory
       .tree("/research")
-      .filter((node) => inferNodeKind(node.path) === kind)
+      .filter((node) => !node.isDir && inferNodeKind(node.path) === kind)
       .map((node) => ({
         id: node.path,
         label: node.gist,
@@ -276,6 +294,8 @@ function edgeKey(edge: GraphEdgeRecord): string {
 }
 
 function inferNodeKind(path: string): GraphNodeRecord["kind"] {
+  if (path.startsWith("/research/claims/")) return "claim";
+  if (path.includes("/candidates/") && path.includes("/claims/")) return "source_claim";
   if (path.includes("/claims/")) return "claim";
   if (path.includes("/methods/")) return "method";
   if (path.includes("/proposal")) return "proposal";

@@ -17,16 +17,68 @@ export function buildResearchReportInput(
   const revisitDue = teamStore.listRevisitDueProposals(sessionId);
   const budgetAnomalies = teamStore.listBudgetAnomalies(sessionId);
   const messages = sessionStore.getMessages(sessionId, options.transcriptLimit ?? 200);
+  const improvements = teamStore.listImprovementProposals(sessionId);
+  const improvementEvaluations = teamStore.listImprovementEvaluations(sessionId);
 
   const sections: string[] = [];
+
+  const activeRuns = runs.filter((run) => run.status === "active");
+  const recentDecision = decisions[0];
+  const nextActions = buildNextActions(runs, proposals, triggers, revisitDue);
+
+  sections.push(
+    "## Summary",
+    `- active_runs=${activeRuns.length}`,
+    `- proposals=${proposals.length}`,
+    `- revisit_due=${revisitDue.length}`,
+    `- open_triggers=${triggers.filter((trigger) => trigger.status === "open").length}`,
+    `- latest_decision=${recentDecision?.decisionType ?? "n/a"}`,
+  );
+
+  if (recentDecision) {
+    sections.push(
+      "## Current Decision",
+      `- proposal=${recentDecision.proposalId}`,
+      `- type=${recentDecision.decisionType}`,
+      `- confidence=${recentDecision.confidence}`,
+      `- summary=${recentDecision.decisionSummary}`,
+      `- reasons=${recentDecision.reasonTags.join(", ") || "n/a"}`,
+    );
+  }
 
   if (runs.length > 0) {
     sections.push(
       "## Team Runs",
       ...runs.map(
-        (run) =>
-          `- ${run.id}: goal=${run.goal}; stage=${run.currentStage}; status=${run.status}`,
+        (run) => {
+          const workflowHistory = teamStore.listWorkflowTransitions(sessionId, run.id).slice(-4);
+          return [
+            `- ${run.id}: goal=${run.goal}; stage=${run.currentStage}; workflow=${run.workflowState}; status=${run.status}`,
+            workflowHistory.length > 0
+              ? `  workflow_history: ${workflowHistory.map((entry) => `${entry.fromState}->${entry.toState}`).join(" | ")}`
+              : null,
+          ].filter(Boolean).join("\n");
+        },
       ),
+    );
+  }
+
+  if (runs.length > 0) {
+    sections.push(
+      "## Automation Status",
+      ...runs.map((run) => {
+        const checkpoints = teamStore.listAutomationCheckpoints(sessionId, run.id).slice(-3);
+        return [
+          `- ${run.id}: mode=${run.automationPolicy.mode}; workflow=${run.workflowState}; status=${run.status}`,
+          `  approvals: proposal=${run.automationPolicy.requireProposalApproval}; experiment=${run.automationPolicy.requireExperimentApproval}; revisit=${run.automationPolicy.requireRevisitApproval}`,
+          `  retry: ${run.automationState.retryCount}/${run.retryPolicy.maxRetries}; retry_on=${run.retryPolicy.retryOn.join(",") || "n/a"}`,
+          `  checkpoint: last=${run.automationState.lastCheckpointAt ?? "n/a"}; next=${run.automationState.nextCheckpointAt ?? "n/a"}; interval_min=${run.checkpointPolicy.intervalMinutes}`,
+          `  timeout: at=${run.automationState.timeoutAt ?? "n/a"}; max_run_min=${run.timeoutPolicy.maxRunMinutes}`,
+          checkpoints.length > 0
+            ? `  recent_checkpoints: ${checkpoints.map((checkpoint) => `${checkpoint.workflowState}/${checkpoint.stage}:${checkpoint.reason}`).join(" | ")}`
+            : null,
+        ].filter(Boolean).join("\n");
+      }),
     );
   }
 
@@ -44,6 +96,9 @@ export function buildResearchReportInput(
           `  target_modules: ${proposal.targetModules.join(", ") || "n/a"}`,
           `  code_change_scope: ${proposal.codeChangeScope.join(", ") || "n/a"}`,
           `  decision_score: ${score ?? "n/a"}`,
+          proposal.claimSupport
+            ? `  claim_support: evidence=${proposal.claimSupport.evidenceStrength.toFixed(2)} freshness=${proposal.claimSupport.freshnessScore.toFixed(2)} contradiction=${proposal.claimSupport.contradictionPressure.toFixed(2)} uncovered=${proposal.claimSupport.unresolvedClaims.length}`
+            : null,
           proposal.scorecard
             ? `  weighted_score: ${proposal.scorecard.weightedScore}`
             : null,
@@ -143,11 +198,11 @@ export function buildResearchReportInput(
   if (ingestion.length > 0) {
     sections.push(
       "## Ingestion Sources",
-      ...ingestion.map(
-        (source) =>
-          `- ${source.sourceId}: ${source.sourceType}; title=${source.title}; status=${source.status}; candidate=${source.extractedCandidateId ?? "n/a"}; claim_count=${source.claimCount ?? 0}; linked_proposal_count=${source.linkedProposalCount ?? 0}`,
-      ),
-    );
+        ...ingestion.map(
+          (source) =>
+          `- ${source.sourceId}: ${source.sourceType}; title=${source.title}; status=${source.status}; candidate=${source.extractedCandidateId ?? "n/a"}; claim_count=${source.claimCount ?? 0}; canonical_claim_count=${source.canonicalClaims?.length ?? 0}; linked_proposal_count=${source.linkedProposalCount ?? 0}`,
+        ),
+      );
   }
 
   if (budgetAnomalies.length > 0) {
@@ -165,12 +220,41 @@ export function buildResearchReportInput(
       ...decisions
         .filter((decision) => decision.drift)
         .map(
-          (decision) => `- ${decision.proposalId}: changed=${decision.drift?.changed}; final=${decision.drift?.finalDecision}; confidence_gap=${decision.drift?.confidenceGap ?? "n/a"}`,
+          (decision) => `- ${decision.proposalId}: changed=${decision.drift?.changed}; final=${decision.drift?.finalDecision}; confidence_gap=${decision.drift?.confidenceGap ?? "n/a"}; notes=${decision.drift?.notes.join(" | ") || "n/a"}`,
         ),
     );
     sections.push(
       "## What Would Change This Decision",
       ...triggers.map((trigger) => `- ${trigger.decisionId}: ${trigger.triggerCondition}`),
+    );
+  }
+
+  if (nextActions.length > 0) {
+    sections.push(
+      "## Next Actions",
+      ...nextActions.map((action) => `- ${action}`),
+    );
+  }
+
+  if (improvements.length > 0) {
+    const prioritizedImprovements = [...improvements].sort((a, b) => b.priorityScore - a.priorityScore);
+    sections.push(
+      "## Self Improvement Proposals",
+      ...prioritizedImprovements.map((proposal) => `- ${proposal.improvementId}: area=${proposal.targetArea}; status=${proposal.status}; review=${proposal.reviewStatus}; priority=${proposal.priorityScore}; title=${proposal.title}; expected_benefit=${proposal.expectedBenefit}; rollback=${proposal.rollbackPlan}`),
+    );
+    sections.push(
+      "## Improvement Review Queue",
+      ...prioritizedImprovements
+        .filter((proposal) => proposal.reviewStatus === "queued")
+        .slice(0, 5)
+        .map((proposal) => `- ${proposal.improvementId}: priority=${proposal.priorityScore}; merge_key=${proposal.mergeKey}; title=${proposal.title}`),
+    );
+  }
+
+  if (improvementEvaluations.length > 0) {
+    sections.push(
+      "## Self Improvement Evaluations",
+      ...improvementEvaluations.map((evaluation) => `- ${evaluation.evaluationId}: outcome=${evaluation.outcome}; rollback_required=${evaluation.rollbackRequired}; action=${evaluation.recommendedAction}; metrics=${evaluation.metricDeltaSummary}`),
     );
   }
 
@@ -182,6 +266,32 @@ export function buildResearchReportInput(
   }
 
   return sections.join("\n\n");
+}
+
+function buildNextActions(
+  runs: ReturnType<TeamStore["listRecentTeamRuns"]>,
+  proposals: ReturnType<TeamStore["listProposalBriefs"]>,
+  triggers: ReturnType<TeamStore["listReconsiderationTriggers"]>,
+  revisitDue: ReturnType<TeamStore["listRevisitDueProposals"]>,
+): string[] {
+  const actions: string[] = [];
+  for (const run of runs.filter((item) => item.status === "active")) {
+    actions.push(`Continue run ${run.id} from workflow ${run.workflowState} (${run.currentStage})`);
+  }
+  for (const proposal of revisitDue) {
+    actions.push(`Re-evaluate proposal ${proposal.proposalId} because revisit is due`);
+  }
+  for (const proposal of proposals.filter((item) => item.status === "ready_for_experiment" || item.status === "scoped_trial").slice(0, 5)) {
+    actions.push(`Prepare experiment validation for proposal ${proposal.proposalId}`);
+  }
+  for (const trigger of triggers.filter((item) => item.status === "open").slice(0, 5)) {
+    actions.push(`Monitor trigger ${trigger.triggerId} for ${trigger.triggerType}`);
+  }
+  return dedupe(actions);
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function formatMetricMap(metrics: Record<string, unknown>): string {

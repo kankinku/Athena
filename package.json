@@ -11,7 +11,7 @@
     "build": "tsc",
     "dev": "tsx src/bootstrap.ts",
     "test:research": "node --import tsx --test src/research/*.test.ts",
-    "test:research:safety": "node --import tsx --test src/research/team-store.test.ts src/research/cli-regression.test.ts",
+    "test:research:safety": "node --import tsx --test src/research/team-store.test.ts src/research/cli-regression.test.ts src/store/migrations-upgrade.test.ts",
     "smoke:research": "tsx src/research/smoke.ts",
     "start": "node dist/bootstrap.js",
     "prepublishOnly": "npm run build"

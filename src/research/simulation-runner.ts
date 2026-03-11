@@ -27,14 +27,42 @@ export class SimulationRunner {
   ) {}
 
   canLaunch(charter: ExperimentCharter): { ok: boolean; reason?: string } {
+    const sessionId = this.sessionIdProvider();
     if (!charter.command.trim()) {
       return { ok: false, reason: "command is required" };
     }
     if (!charter.machineId.trim()) {
       return { ok: false, reason: "machineId is required" };
     }
+    if (!charter.evaluationMetric.trim()) {
+      return { ok: false, reason: "evaluationMetric is required" };
+    }
+    if (!charter.allowedChangeUnit.trim()) {
+      return { ok: false, reason: "allowedChangeUnit is required" };
+    }
+    if (!charter.rollbackPlan.trim()) {
+      return { ok: false, reason: "rollbackPlan is required" };
+    }
+    if (!charter.description.trim()) {
+      return { ok: false, reason: "description is required" };
+    }
+    if (charter.patchScope.length === 0) {
+      return { ok: false, reason: "patchScope must include at least one change unit" };
+    }
+    if (charter.branchName && !charter.repoPath?.trim()) {
+      return { ok: false, reason: "repoPath is required when branchName is provided" };
+    }
     if ((charter.budget.maxWallClockMinutes ?? 0) < 0) {
       return { ok: false, reason: "maxWallClockMinutes must be >= 0" };
+    }
+    if ((charter.budget.maxConcurrentRuns ?? 1) <= 0) {
+      return { ok: false, reason: "maxConcurrentRuns must be >= 1" };
+    }
+    if (sessionId && sessionId !== "pending" && charter.budget.maxConcurrentRuns !== undefined) {
+      const runningCount = this.teamStore.listRunningSimulationRuns(sessionId).length;
+      if (runningCount >= charter.budget.maxConcurrentRuns) {
+        return { ok: false, reason: `maxConcurrentRuns reached (${runningCount}/${charter.budget.maxConcurrentRuns})` };
+      }
     }
     return { ok: true };
   }
@@ -63,37 +91,56 @@ export class SimulationRunner {
       createdAt: nowTimestamp(),
     });
 
-    let branchName = charter.branchName;
-    if (!branchName && charter.repoPath) {
-      branchName = await this.brancher.createBranch(
+    try {
+      let branchName = charter.branchName;
+      if (!branchName && charter.repoPath) {
+        branchName = await this.brancher.createBranch(
+          charter.machineId,
+          charter.repoPath,
+          charter.description,
+        ) ?? undefined;
+      }
+
+      const proc = await this.executor.execBackground(
         charter.machineId,
-        charter.repoPath,
-        charter.description,
-      ) ?? undefined;
+        charter.command,
+        undefined,
+        {
+          metricNames: charter.metricNames,
+          metricPatterns: charter.metricPatterns,
+        },
+      );
+
+      const taskId = `${proc.machineId}:${proc.pid}`;
+      this.teamStore.updateSimulationRun(run.id, {
+        taskKey: taskId,
+        status: "running",
+      });
+
+      return {
+        simulationId: run.id,
+        taskId,
+        branchName,
+        logPath: proc.logPath,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result: ExperimentResult = {
+        experimentId: run.id,
+        proposalId: charter.proposalId,
+        outcomeStatus: "crash",
+        beforeMetrics: {},
+        afterMetrics: {},
+        resourceDelta: {},
+        surprisingFindings: [message],
+        notes: `Launch failed: ${message}`,
+      };
+      this.teamStore.updateSimulationRun(run.id, {
+        status: "launch_failed",
+        result,
+      });
+      throw error;
     }
-
-    const proc = await this.executor.execBackground(
-      charter.machineId,
-      charter.command,
-      undefined,
-      {
-        metricNames: charter.metricNames,
-        metricPatterns: charter.metricPatterns,
-      },
-    );
-
-    const taskId = `${proc.machineId}:${proc.pid}`;
-    this.teamStore.updateSimulationRun(run.id, {
-      taskKey: taskId,
-      status: "running",
-    });
-
-    return {
-      simulationId: run.id,
-      taskId,
-      branchName,
-      logPath: proc.logPath,
-    };
   }
 
   finalize(simulationId: string, result: ExperimentResult): ExperimentResult {

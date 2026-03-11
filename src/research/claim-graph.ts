@@ -25,8 +25,10 @@ export function normalizeClaimStatement(statement: string): string {
   return statement
     .trim()
     .toLowerCase()
+    .replace(/[’']/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\b(a|an|the)\b/g, " ")
+    .replace(/\b(this|that|these|those)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

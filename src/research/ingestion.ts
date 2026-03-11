@@ -107,6 +107,28 @@ export function buildCanonicalClaims(claims: ExtractedClaim[]): CanonicalClaim[]
   return [...canonicalMap.values()];
 }
 
+export function inferSupportTags(statement: string): string[] {
+  const lower = normalizeClaimStatement(statement);
+  const tags: string[] = [];
+  if (/(memory|oom|ram|vram|activation)/.test(lower)) tags.push("memory");
+  if (/(latency|throughput|wall clock|runtime|speed|faster|slower)/.test(lower)) tags.push("latency");
+  if (/(rollback|revert|recovery|undo)/.test(lower)) tags.push("rollback");
+  if (/(observe|monitor|trace|telemetry|metric|alert)/.test(lower)) tags.push("observability");
+  if (/(evidence|benchmark|measure|measured|validated|experiment)/.test(lower)) tags.push("evidence");
+  return dedupe(tags);
+}
+
+export function inferContradictionTags(statement: string): string[] {
+  const lower = normalizeClaimStatement(statement);
+  const tags: string[] = [];
+  if (/(however|but|although|despite)/.test(lower)) tags.push("counter_evidence");
+  if (/(regress|worse|slower|unstable|instability|fails|failure|crash)/.test(lower)) tags.push("counter_evidence");
+  if (/(no evidence|not supported|does not improve|did not improve|not reproducible|unable to reproduce)/.test(lower)) {
+    tags.push("counter_evidence");
+  }
+  return dedupe(tags);
+}
+
 function normalizeClaim(
   claim: ExtractedClaim,
   source: IngestionSourceRecord,
@@ -139,23 +161,6 @@ function normalizeClaim(
     supportTags,
     contradictionTags,
   };
-}
-
-function inferSupportTags(statement: string): string[] {
-  const lower = statement.toLowerCase();
-  const tags: string[] = [];
-  if (lower.includes("memory")) tags.push("memory");
-  if (lower.includes("latency") || lower.includes("throughput")) tags.push("latency");
-  if (lower.includes("rollback")) tags.push("rollback");
-  if (lower.includes("observe") || lower.includes("monitor")) tags.push("observability");
-  return tags;
-}
-
-function inferContradictionTags(statement: string): string[] {
-  const lower = statement.toLowerCase();
-  const tags: string[] = [];
-  if (/(not|however|but|regress|worse|increase wall-clock|slower)/.test(lower)) tags.push("counter_evidence");
-  return tags;
 }
 
 function dedupe(items: string[]): string[] {

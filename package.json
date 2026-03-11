@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/bootstrap.ts",
+    "test:research": "node --import tsx --test src/research/*.test.ts",
     "smoke:research": "tsx src/research/smoke.ts",
     "start": "node dist/bootstrap.js",
     "prepublishOnly": "npm run build"

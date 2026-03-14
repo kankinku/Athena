@@ -90,11 +90,13 @@ test("automation manager finalizes finished simulations and records reporting st
     const updates = await manager.tickSession(session.id);
     const refreshedRun = teamStore.getTeamRun(run.id);
     const simulation = teamStore.getSimulationRun(launch.simulationId);
+    const journal = teamStore.listActionJournal(session.id, run.id);
 
     assert.ok(updates.some((item) => item.id === run.id));
     assert.equal(simulation?.status, "inconclusive");
     assert.equal(refreshedRun?.currentStage, "reporting");
     assert.equal((refreshedRun?.latestOutput as { outcomeStatus?: string } | undefined)?.outcomeStatus, "inconclusive");
+    assert.ok(journal.some((entry) => entry.actionType === "simulation_finalize"));
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });
@@ -134,10 +136,14 @@ test("automation manager recovers active auto runs on startup", async () => {
 
     const recovered = await manager.recoverSession(session.id);
     const refreshedRun = teamStore.getTeamRun(run.id);
+    const lease = teamStore.listActiveRunLeases(session.id).find((item) => item.runId === run.id);
+    const journal = teamStore.listActionJournal(session.id, run.id);
 
     assert.ok(recovered.some((item) => item.id === run.id));
     assert.equal(refreshedRun?.automationState.resumeCount, 1);
     assert.equal((refreshedRun?.latestOutput as { resumeReason?: string } | undefined)?.resumeReason, "runtime startup recovery");
+    assert.equal(lease?.ownerId, `automation-manager:${process.pid}`);
+    assert.ok(journal.some((entry) => entry.actionType === "session_recovery"));
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });
@@ -380,12 +386,14 @@ test("automation manager fails runs that exceed the current stage timeout", asyn
 
     const updates = await manager.tickSession(session.id);
     const refreshedRun = teamStore.getTeamRun(run.id);
+    const incidents = teamStore.listOpenIncidents(session.id);
 
     assert.ok(updates.some((item) => item.id === run.id));
     assert.equal(refreshedRun?.status, "failed");
     assert.equal(refreshedRun?.currentStage, "reporting");
     assert.equal((refreshedRun?.latestOutput as { automationTimeout?: boolean } | undefined)?.automationTimeout, true);
     assert.match((refreshedRun?.latestOutput as { automationBlock?: { reason: string } } | undefined)?.automationBlock?.reason ?? "", /stage timeout/i);
+    assert.ok(incidents.some((incident) => incident.type === "recovery_needed"));
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

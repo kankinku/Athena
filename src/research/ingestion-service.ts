@@ -1,15 +1,15 @@
-import { readFile } from "node:fs/promises";
-import { extname, basename } from "node:path";
-import { Readability } from "@mozilla/readability";
-import { parseHTML } from "linkedom";
-import { extractText, getDocumentProxy, getMeta } from "unpdf";
 import type { TeamOrchestrator } from "./team-orchestrator.js";
 import type { TeamStore } from "./team-store.js";
-import type { ExtractedClaim, IngestionSourceRecord, ResearchCandidatePack, TeamRunRecord } from "./contracts.js";
-import { createCandidatePackFromSource, createIngestionSource, updateIngestionSourceContent } from "./ingestion.js";
+import type { EvidenceHealthSummary, ExtractedClaim, IngestionSourceRecord, ResearchCandidatePack, TeamRunRecord } from "./contracts.js";
+import { buildCanonicalClaims, createCandidatePackFromSource, createIngestionSource, updateIngestionSourceContent } from "./ingestion.js";
+import type { SecurityManager } from "../security/policy.js";
+import { resolveDocumentInput } from "./source-adapters/document-adapter.js";
+import { resolveRepoSnapshotInput } from "./source-adapters/repo-snapshot-adapter.js";
+import { resolveTextInput } from "./source-adapters/text-adapter.js";
+import { resolveUrlInput } from "./source-adapters/url-adapter.js";
 
 export interface IngestionRequest {
-  inputType: "url" | "document" | "text";
+  inputType: "url" | "document" | "text" | "repo";
   value: string;
   sessionId: string;
   problemArea: string;
@@ -29,16 +29,30 @@ export class IngestionService {
   constructor(
     private teamStore: TeamStore,
     private teamOrchestrator: TeamOrchestrator,
+    private securityManager?: SecurityManager,
   ) {}
 
   async ingest(request: IngestionRequest): Promise<IngestionResult> {
-    const resolved = await resolveInput(request.inputType, request.value, request.title);
-    const source = updateIngestionSourceContent(createIngestionSource({
+    const resolved = await resolveInput(request, this.securityManager);
+    const draftedSource = updateIngestionSourceContent(createIngestionSource({
       sourceType: request.sourceType ?? inferSourceType(request.inputType),
       title: resolved.title,
       url: resolved.url,
       notes: resolved.notes,
     }), resolved.text);
+    const existing = this.findExistingSource(request.sessionId, draftedSource);
+    const source = existing
+      ? {
+          ...existing,
+          sourceType: draftedSource.sourceType,
+          title: draftedSource.title,
+          url: draftedSource.url,
+          notes: draftedSource.notes,
+          sourceDigest: draftedSource.sourceDigest,
+          sourceExcerpt: draftedSource.sourceExcerpt,
+          updatedAt: draftedSource.updatedAt,
+        }
+      : draftedSource;
 
     this.teamStore.saveIngestionSource(request.sessionId, source);
 
@@ -51,10 +65,28 @@ export class IngestionService {
       counterEvidence: claims.filter((claim) => claim.disposition !== "support").map((claim) => claim.statement),
       openQuestions: inferOpenQuestions(resolved.text),
     });
+    const mergedExtractedClaims = mergeExtractedClaims(existing?.extractedClaims ?? [], pack.claims);
+    const mergedCanonicalClaims = buildCanonicalClaims([
+      ...(existing?.extractedClaims ?? []),
+      ...mergedExtractedClaims,
+    ]);
+    const evidenceHealth = buildEvidenceHealthFromClaims(mergedExtractedClaims, mergedCanonicalClaims);
+    const persistedSource: IngestionSourceRecord = {
+      ...source,
+      status: "ingested",
+      claimCount: mergedExtractedClaims.length,
+      freshnessScore: evidenceHealth.freshnessScore,
+      evidenceConfidence: evidenceHealth.evidenceStrength,
+      extractedClaims: mergedExtractedClaims,
+      canonicalClaims: mergedCanonicalClaims,
+      evidenceHealth,
+      updatedAt: Date.now(),
+    };
 
     const run = this.ensureRun(request.sessionId, request.runId, source.title, request.problemArea);
     const updatedRun = this.teamOrchestrator.recordCollectionPack(run.id, pack) ?? run;
-    const refreshedSource = this.teamStore.listIngestionSources(request.sessionId).find((item) => item.sourceId === source.sourceId) ?? source;
+    this.teamStore.saveIngestionSource(request.sessionId, persistedSource);
+    const refreshedSource = this.teamStore.listIngestionSources(request.sessionId).find((item) => item.sourceId === source.sourceId) ?? persistedSource;
 
     return {
       run: updatedRun,
@@ -66,7 +98,7 @@ export class IngestionService {
 
   private ensureRun(sessionId: string, runId: string | undefined, title: string, problemArea: string): TeamRunRecord {
     if (runId) {
-      const existing = this.teamStore.getTeamRun(runId);
+      const existing = this.teamStore.getTeamRunForSession(sessionId, runId);
       if (existing) return existing;
     }
 
@@ -75,86 +107,50 @@ export class IngestionService {
 
     return this.teamOrchestrator.startRunForSession(sessionId, `Ingest ${title} for ${problemArea}`);
   }
+
+  private findExistingSource(sessionId: string, source: IngestionSourceRecord): IngestionSourceRecord | undefined {
+    return this.teamStore.listIngestionSources(sessionId).find((candidate) =>
+      (source.sourceDigest && candidate.sourceDigest === source.sourceDigest)
+      || (source.url && candidate.url === source.url)
+    );
+  }
 }
 
 async function resolveInput(
-  inputType: IngestionRequest["inputType"],
-  value: string,
-  explicitTitle?: string,
+  request: IngestionRequest,
+  securityManager?: SecurityManager,
 ): Promise<{ title: string; url?: string; text: string; notes?: string }> {
-  if (inputType === "text") {
-    const previewTitle = truncate(singleLine(value), 80);
-    const title = explicitTitle ?? (previewTitle || "Manual text input");
-    return { title, text: value, notes: `manual text (${value.length} chars)` };
+  const context = {
+    actorRole: "operator" as const,
+    sessionId: request.sessionId,
+    runId: request.runId,
+    machineId: "local",
+    toolName: "ingestion_extract_source",
+    toolFamily: "research-orchestration" as const,
+  };
+
+  if (request.inputType === "text") {
+    return resolveTextInput(request.value, request.title);
   }
 
-  if (inputType === "url") {
-    const response = await fetch(value);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
-    }
-    const html = await response.text();
-    const parsed = extractReadableHtml(html, value);
-    return {
-      title: explicitTitle ?? parsed.title ?? value,
-      url: value,
-      text: parsed.text,
-      notes: `url ingestion (${parsed.text.length} chars)`,
-    };
+  if (request.inputType === "url") {
+    securityManager?.assertCommandAllowed(`fetch ${request.value}`, {
+      ...context,
+      networkAccess: true,
+    });
+    return resolveUrlInput(request.value, request.title);
   }
 
-  const buffer = await readFile(value);
-  const extension = extname(value).toLowerCase();
-  const title = explicitTitle ?? basename(value);
-
-  if ([".txt", ".log", ".md", ".markdown"].includes(extension)) {
-    const markdown = buffer.toString("utf8");
-    const plainText = extension === ".txt" || extension === ".log"
-      ? markdown
-      : stripMarkdown(markdown);
-    return {
-      title,
-      text: plainText,
-      notes: `document ingestion (${extension.slice(1)} text)`,
-    };
+  securityManager?.assertPathAllowed(request.value, "read", context);
+  if (request.inputType === "repo") {
+    return resolveRepoSnapshotInput(request.value, request.title, {
+      assertReadablePath: (path) => securityManager?.assertPathAllowed(path, "read", context),
+    });
   }
 
-  if ([".html", ".htm"].includes(extension)) {
-    const html = buffer.toString("utf8");
-    return {
-      title,
-      text: extractReadableHtml(html, value).text,
-      notes: `document ingestion (${extension.slice(1)} html)`,
-    };
-  }
-
-  if (extension === ".pdf") {
-    const pdf = new Uint8Array(buffer);
-    const document = await getDocumentProxy(pdf);
-    const meta = await getMeta(pdf).catch(() => undefined);
-    const extracted = await extractText(document, { mergePages: true });
-    const pdfText = Array.isArray(extracted.text) ? extracted.text.join("\n") : extracted.text;
-    return {
-      title: explicitTitle ?? meta?.info?.Title ?? title,
-      text: pdfText,
-      notes: "document ingestion (pdf)",
-    };
-  }
-
-  throw new Error(`Unsupported ingestion document type: ${extension || "unknown"}`);
-}
-
-function extractReadableHtml(html: string, url: string): { title?: string; text: string } {
-  const { document } = parseHTML(html);
-  const reader = new Readability(document as unknown as Document, { keepClasses: false });
-  const article = reader.parse();
-  const pageTitle = String(document.title ?? "");
-  if (article?.textContent?.trim()) {
-    return { title: article.title ?? (pageTitle || url), text: article.textContent.trim() };
-  }
-
-  const text = document.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-  return { title: pageTitle || url, text };
+  return resolveDocumentInput(request.value, request.title, {
+    assertReadablePath: (path) => securityManager?.assertPathAllowed(path, "read", context),
+  });
 }
 
 function extractClaimsFromText(
@@ -162,8 +158,7 @@ function extractClaimsFromText(
   source: IngestionSourceRecord,
   problemArea: string,
 ): ExtractedClaim[] {
-  const sentences = splitSentences(text)
-    .map((sentence, index) => buildSentenceRecord(text, sentence, index))
+  const sentences = splitSentenceRecords(text)
     .filter((record) => isClaimCandidate(record.text));
 
   const picked = sentences
@@ -174,13 +169,10 @@ function extractClaimsFromText(
 
   const selected = picked.length > 0
     ? picked
-    : splitParagraphs(text)
+    : splitParagraphRecords(text)
         .slice(0, 3)
-        .map((paragraph, index) => ({
-          text: paragraph,
-          index,
-          start: Math.max(0, text.indexOf(paragraph)),
-          end: Math.max(0, text.indexOf(paragraph)) + paragraph.length,
+        .map((record) => ({
+          ...record,
           score: 1,
         }));
 
@@ -211,30 +203,55 @@ function extractClaimsFromText(
   });
 }
 
-function splitParagraphs(text: string): string[] {
-  return text
-    .replace(/\r/g, "\n")
-    .split(/\n{2,}/)
-    .map((value) => value.replace(/\s+/g, " ").trim())
-    .filter((value) => value.length >= 35 && value.length <= 320);
+interface TextSegmentRecord {
+  text: string;
+  index: number;
+  start: number;
+  end: number;
 }
 
-function splitSentences(text: string): string[] {
-  return text
-    .replace(/\r/g, "\n")
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((value) => value.replace(/\s+/g, " ").trim())
-    .filter((value) => value.length >= 35 && value.length <= 320);
+function splitParagraphRecords(text: string): TextSegmentRecord[] {
+  return findSegmentRecords(
+    text,
+    text
+      .replace(/\r/g, "\n")
+      .split(/\n{2,}/)
+      .map((value) => value.replace(/\s+/g, " ").trim())
+      .filter((value) => value.length >= 35 && value.length <= 320),
+  );
 }
 
-function buildSentenceRecord(text: string, sentence: string, index: number): { text: string; index: number; start: number; end: number } {
-  const start = text.indexOf(sentence);
-  return {
-    text: sentence,
-    index,
-    start: Math.max(0, start),
-    end: Math.max(0, start) + sentence.length,
-  };
+function splitSentenceRecords(text: string): TextSegmentRecord[] {
+  const records: TextSegmentRecord[] = [];
+  const matcher = /[^.!?\n]+(?:[.!?]+|$)/g;
+  let match: RegExpExecArray | null;
+  let index = 0;
+  while ((match = matcher.exec(text)) !== null) {
+    const raw = match[0];
+    const trimmed = raw.replace(/\s+/g, " ").trim();
+    if (trimmed.length < 35 || trimmed.length > 320) continue;
+    const leading = raw.search(/\S/);
+    const trimmedEnd = raw.trimEnd();
+    const trailingOffset = raw.lastIndexOf(trimmedEnd) + trimmedEnd.length;
+    const start = match.index + Math.max(0, leading);
+    const end = match.index + trailingOffset;
+    records.push({ text: trimmed, index, start, end });
+    index += 1;
+  }
+  return records;
+}
+
+function findSegmentRecords(text: string, segments: string[]): TextSegmentRecord[] {
+  const records: TextSegmentRecord[] = [];
+  let cursor = 0;
+  for (const [index, segment] of segments.entries()) {
+    const start = text.indexOf(segment, cursor);
+    if (start < 0) continue;
+    const end = start + segment.length;
+    records.push({ text: segment, index, start, end });
+    cursor = end;
+  }
+  return records;
 }
 
 function isClaimCandidate(sentence: string): boolean {
@@ -302,33 +319,59 @@ function inferMethods(text: string): string[] {
 }
 
 function inferOpenQuestions(text: string): string[] {
-  const sentences = splitSentences(text);
+  const sentences = splitSentenceRecords(text).map((record) => record.text);
   return sentences.filter((sentence) => /\?$|open question|unknown|unclear|future work/i.test(sentence)).slice(0, 5);
 }
 
 function inferSourceType(inputType: IngestionRequest["inputType"]): IngestionSourceRecord["sourceType"] {
   if (inputType === "url") return "docs";
+  if (inputType === "repo") return "repo";
   if (inputType === "document") return "paper";
   return "manual";
 }
 
-function singleLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+function mergeExtractedClaims(
+  existing: ExtractedClaim[],
+  incoming: ExtractedClaim[],
+): ExtractedClaim[] {
+  const merged = new Map<string, ExtractedClaim>();
+  for (const claim of [...existing, ...incoming]) {
+    const key = `${claim.normalizedStatement ?? claim.statement.toLowerCase()}:${claim.sourceId ?? ""}:${claim.citationSpans?.[0]?.locator ?? ""}`;
+    merged.set(key, claim);
+  }
+  return [...merged.values()];
 }
 
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, limit - 1)}...`;
+function buildEvidenceHealthFromClaims(
+  claims: ExtractedClaim[],
+  canonicalClaims: ResearchCandidatePack["canonicalClaims"] = [],
+): EvidenceHealthSummary {
+  const contradictionCount = claims.filter((claim) => claim.disposition !== "support").length;
+  const evidenceStrength = average(claims.map((claim) => claim.confidence));
+  const freshnessScore = average(claims.map((claim) => claim.freshnessScore));
+  const modelConfidence = average(canonicalClaims?.map((claim) => claim.confidence) ?? []);
+  const coverageGaps = [
+    ...(claims.some((claim) => (claim.citationSpans?.length ?? 0) === 0) ? ["missing_citations"] : []),
+    ...(claims.some((claim) => (claim.sourceAttributions?.length ?? 0) === 0) ? ["missing_source_attribution"] : []),
+    ...(contradictionCount > 0 ? ["contradiction_present"] : []),
+  ];
+
+  return {
+    sourceCount: new Set(claims.map((claim) => claim.sourceId).filter(Boolean)).size,
+    claimCount: claims.length,
+    canonicalClaimCount: canonicalClaims?.length ?? 0,
+    contradictionCount,
+    uncoveredClaimCount: claims.filter((claim) => !claim.sourceId).length,
+    freshnessScore,
+    evidenceStrength,
+    modelConfidence,
+    confidenceSeparation: Number(Math.abs(modelConfidence - evidenceStrength).toFixed(2)),
+    coverageGaps,
+  };
 }
 
-function stripMarkdown(value: string): string {
-  return value
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^>\s?/gm, "")
-    .replace(/[*_~]/g, "")
-    .replace(/\r/g, "")
-    .trim();
+function average(values: Array<number | undefined>): number {
+  const valid = values.filter((value): value is number => typeof value === "number");
+  if (valid.length === 0) return 0;
+  return Number((valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2));
 }

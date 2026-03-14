@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 const PROJECT_ROOT = process.cwd();
+const CLI_ENV = { ...process.env, ANTHROPIC_API_KEY: "test-key" };
 
 test("operator review CLI safely updates proposal and improvement approval state", async () => {
   const home = mkdtempSync(join(tmpdir(), "athena-review-flow-"));
@@ -59,13 +60,13 @@ test("operator review CLI safely updates proposal and improvement approval state
 
     const proposalOutput = execFileSync(
       process.execPath,
-      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "review", "proposal-review", "--kind", "proposal", "--action", "approve"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "operate", "proposal-review", "--kind", "proposal", "--action", "approve"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const improvementOutput = execFileSync(
       process.execPath,
-      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "review", "imp-review", "--kind", "improvement", "--action", "promote"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "operate", "imp-review", "--kind", "improvement", "--action", "promote"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const reportOutput = buildResearchReportInput(session.id, new TeamStore(), new SessionStore(), {
       transcriptLimit: 20,

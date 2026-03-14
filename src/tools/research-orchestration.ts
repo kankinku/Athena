@@ -289,7 +289,7 @@ export function createResearchOrchestrationTools(
       parameters: {
         type: "object",
         properties: {
-          input_type: { type: "string", description: "url|document|text" },
+          input_type: { type: "string", description: "url|document|text|repo" },
           value: { type: "string", description: "URL, local file path, or raw text" },
           problem_area: { type: "string", description: "Research problem area for canonical claim grouping" },
           title: { type: "string", description: "Optional source title override" },
@@ -301,7 +301,7 @@ export function createResearchOrchestrationTools(
       execute: async (args) => {
         try {
           const result = await ingestionService.ingest({
-            inputType: args.input_type as "url" | "document" | "text",
+            inputType: args.input_type as "url" | "document" | "text" | "repo",
             value: args.value as string,
             problemArea: args.problem_area as string,
             title: args.title as string | undefined,

@@ -55,8 +55,10 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   const {
     activeResearchRun,
     latestIngestionSource,
+    openIncidentCount,
     metricData,
     resourceData,
+    reviewQueueCount,
     tasks,
   } = useRuntimePolling(runtime);
 
@@ -252,6 +254,8 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
         <ResearchStatusPanel
           run={activeResearchRun}
           source={latestIngestionSource}
+          openIncidentCount={openIncidentCount}
+          reviewQueueCount={reviewQueueCount}
           securityMode={securityManager.getStatus().mode}
           width={width - 2}
         />

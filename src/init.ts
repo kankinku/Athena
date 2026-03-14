@@ -63,6 +63,7 @@ import { SimulationRunner } from "./research/simulation-runner.js";
 import { ResearchSessionBootstrapper } from "./research/session-bootstrap.js";
 import { IngestionService } from "./research/ingestion-service.js";
 import { ResearchAutomationManager } from "./research/automation-manager.js";
+import { SecurityAuditStore } from "./security/audit-store.js";
 import { SecurityManager } from "./security/policy.js";
 
 const SYSTEM_PROMPT = `You are Athena, an autonomous ML research agent. You help researchers design, run, and monitor machine learning experiments on local and remote machines.
@@ -389,7 +390,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
     graphMemory,
     () => memoryStore.getSessionId(),
   );
-  const ingestionService = new IngestionService(teamStore, teamOrchestrator);
+  const ingestionService = new IngestionService(teamStore, teamOrchestrator, securityManager);
   const simulationRunner = new SimulationRunner(
     exec,
     connPool,
@@ -510,7 +511,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
 
 function resolveRuntimeBootstrap(options: RuntimeOptions): RuntimeBootstrapConfig {
   const projectConfig = findProjectConfig();
-  const securityManager = new SecurityManager(projectConfig?.security);
+  const securityManager = new SecurityManager(projectConfig?.security, new SecurityAuditStore());
   const prefs = loadPreferences();
 
   return {

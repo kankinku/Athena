@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { closeDb } from "../store/database.js";
 
 const PROJECT_ROOT = process.cwd();
+const CLI_ENV = { ...process.env, ANTHROPIC_API_KEY: "test-key" };
 
 test("research CLI renders workflow and automation operator views from persisted state", async () => {
   const home = mkdtempSync(join(tmpdir(), "athena-cli-regression-"));
@@ -23,7 +24,7 @@ test("research CLI renders workflow and automation operator views from persisted
     const ingestOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingest", docPath, "--type", "document", "--problem-area", "runtime optimization"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const runId = ingestOutput.match(/^run\s+(\S+)/m)?.[1];
     if (!runId) {
@@ -33,17 +34,17 @@ test("research CLI renders workflow and automation operator views from persisted
     const workflowOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "workflow", runId],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const automationOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "automation", runId],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const ingestionOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingestion"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
 
     assert.match(workflowOutput, /transition\s+draft -> ready reason=goal accepted for research planning/);
@@ -73,19 +74,19 @@ test("research CLI ingests a document and exposes extracted claim details", asyn
     const ingestOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingest", docPath, "--type", "document", "--problem-area", "runtime optimization"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const listOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingestion"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
 
     const sourceId = listOutput.trim().split(/\s+/)[0];
     const detailOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingestion", sourceId],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
 
     assert.match(ingestOutput, /claims\s+extracted=/);
@@ -114,7 +115,7 @@ test("research CLI renders autonomy policy details for fully autonomous runs", a
     const ingestOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "ingest", docPath, "--type", "document", "--problem-area", "runtime optimization"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const runId = ingestOutput.match(/^run\s+(\S+)/m)?.[1];
     if (!runId) {
@@ -158,20 +159,209 @@ test("research CLI renders autonomy policy details for fully autonomous runs", a
       {
         cwd: PROJECT_ROOT,
         encoding: "utf8",
-        env: { ...process.env, ATHENA_HOME: home },
+        env: { ...CLI_ENV, ATHENA_HOME: home },
       },
     );
 
     const automationOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "automation", runId],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
 
     assert.match(automationOutput, /mode=fully-autonomous/);
     assert.match(automationOutput, /autonomy\s+risk=safe/);
     assert.match(automationOutput, /retry_cap=1/);
     assert.match(automationOutput, /machines=local/);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("research CLI exposes queue, incident, and journal operator views", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-cli-operator-views-"));
+  process.env.ATHENA_HOME = home;
+
+  try {
+    const seedOutput = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--import",
+        "tsx",
+        "-e",
+        `
+          const { SessionStore } = await import("./src/store/session-store.ts");
+          const { TeamStore } = await import("./src/research/team-store.ts");
+          const { closeDb } = await import("./src/store/database.ts");
+          const sessionStore = new SessionStore();
+          const session = sessionStore.createSession("openai", "gpt-5.4");
+          const teamStore = new TeamStore();
+          const run = teamStore.createTeamRun(session.id, "Operator queue test");
+          teamStore.saveProposalBrief(session.id, {
+            proposalId: "proposal-queue",
+            title: "Needs approval",
+            summary: "Queue this proposal",
+            targetModules: ["trainer"],
+            expectedGain: "moderate",
+            expectedRisk: "low",
+            codeChangeScope: ["config"],
+            status: "candidate",
+            experimentBudget: { maxWallClockMinutes: 5 },
+            stopConditions: [],
+            reconsiderConditions: [],
+            claimIds: [],
+          });
+          teamStore.saveActionJournal({
+            actionId: "action-queue",
+            sessionId: session.id,
+            runId: run.id,
+            actionType: "session_tick",
+            state: "running",
+            dedupeKey: "tick:run",
+            summary: "Tick running",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          teamStore.saveIncident({
+            incidentId: "incident-queue",
+            sessionId: session.id,
+            runId: run.id,
+            type: "automation_block",
+            severity: "warning",
+            summary: "Automation blocked",
+            status: "open",
+            actionRequired: true,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          console.log(run.id);
+          closeDb();
+        `,
+      ],
+      {
+        cwd: PROJECT_ROOT,
+        encoding: "utf8",
+        env: { ...CLI_ENV, ATHENA_HOME: home },
+      },
+    );
+    const runId = seedOutput.trim();
+
+    const queueOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "queue"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+    const incidentsOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "incidents"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+    const journalOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "journal", runId],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+
+    assert.match(queueOutput, /approval_needed/);
+    assert.match(incidentsOutput, /automation_block/);
+    assert.match(journalOutput, /session_tick/);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("research CLI operate is session scoped and clears operator backlog on resume", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-cli-operate-"));
+  process.env.ATHENA_HOME = home;
+
+  try {
+    const seedOutput = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--import",
+        "tsx",
+        "-e",
+        `
+          const { SessionStore } = await import("./src/store/session-store.ts");
+          const { TeamStore } = await import("./src/research/team-store.ts");
+          const { closeDb } = await import("./src/store/database.ts");
+          const sessionStore = new SessionStore();
+          const session = sessionStore.createSession("openai", "gpt-5.4");
+          const teamStore = new TeamStore();
+          const run = teamStore.createTeamRun(session.id, "Operator operate test");
+          teamStore.noteAutomationBlock(run.id, "resume", "manual recovery required");
+          console.log(JSON.stringify({ sessionId: session.id, runId: run.id }));
+          closeDb();
+        `,
+      ],
+      {
+        cwd: PROJECT_ROOT,
+        encoding: "utf8",
+        env: { ...CLI_ENV, ATHENA_HOME: home },
+      },
+    );
+    const { sessionId, runId } = JSON.parse(seedOutput.trim()) as { sessionId: string; runId: string };
+
+    const resumeOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "operate", runId, "--action", "resume"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home, ATHENA_SESSION_ID: sessionId } },
+    );
+    const queueOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "queue"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home, ATHENA_SESSION_ID: sessionId } },
+    );
+    const incidentsOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "incidents"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home, ATHENA_SESSION_ID: sessionId } },
+    );
+
+    assert.match(resumeOutput, /resumed automation/);
+    assert.doesNotMatch(queueOutput, /blocked:/);
+    assert.doesNotMatch(incidentsOutput, /status=open/);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("research CLI exposes eval fixtures, soak artifacts, and supervised checklist views", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-cli-verification-"));
+  process.env.ATHENA_HOME = home;
+
+  try {
+    const evalsOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "evals"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+    const soakOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "soak"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+    const checklistOutput = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "checklist"],
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
+    );
+
+    assert.match(evalsOutput, /operator_intervention/);
+    assert.match(evalsOutput, /proposal-evidence-floor/);
+    assert.match(soakOutput, /artifact\s+/);
+    assert.match(soakOutput, /overall=blocked/);
+    assert.match(checklistOutput, /Athena Supervised Production Checklist/);
+    assert.match(checklistOutput, /overall=blocked/);
+    assert.match(checklistOutput, /single_remote: status=blocked/);
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

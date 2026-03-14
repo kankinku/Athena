@@ -3,8 +3,10 @@
   "active": true,
   "skill": "autopilot",
   "keyword": "autopilot",
-  "phase": "planning",
-  "activated_at": "2026-03-14T07:37:33.549Z",
-  "updated_at": "2026-03-14T07:46:02.354Z",
-  "source": "keyword-detector"
+  "phase": "reviewing",
+  "activated_at": "2026-03-14T09:04:35.225Z",
+  "updated_at": "2026-03-14T10:12:10.520Z",
+  "source": "keyword-detector",
+  "iteration": 3,
+  "last_turn_at": "2026-03-14T10:30:20.266Z"
 }

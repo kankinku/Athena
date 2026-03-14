@@ -5,11 +5,13 @@ import type { IngestionSourceRecord, TeamRunRecord } from "../../research/contra
 interface ResearchStatusPanelProps {
   run: TeamRunRecord | null;
   source?: IngestionSourceRecord | null;
+  openIncidentCount?: number;
+  reviewQueueCount?: number;
   securityMode?: string;
   width?: number;
 }
 
-export function ResearchStatusPanel({ run, source, securityMode, width }: ResearchStatusPanelProps) {
+export function ResearchStatusPanel({ run, source, openIncidentCount = 0, reviewQueueCount = 0, securityMode, width }: ResearchStatusPanelProps) {
   const panelWidth = width ?? ((process.stdout.columns || 80) - 2);
 
   if (!run) {
@@ -70,6 +72,12 @@ export function ResearchStatusPanel({ run, source, securityMode, width }: Resear
           <Text>  </Text>
         </>
       )}
+      <Text color={C.dim}>QUEUE </Text>
+      <Text color={reviewQueueCount > 0 ? C.primary : C.dim}>{reviewQueueCount}</Text>
+      <Text>  </Text>
+      <Text color={C.dim}>INC </Text>
+      <Text color={openIncidentCount > 0 ? C.error : C.dim}>{openIncidentCount}</Text>
+      <Text>  </Text>
       <Text color={C.dim}>GOAL </Text>
       <Text color={C.text} wrap="truncate">{goal}</Text>
     </Box>

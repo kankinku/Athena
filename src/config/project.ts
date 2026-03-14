@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import type { SecurityConfig } from "../security/contracts.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -32,20 +33,7 @@ export interface ProjectConfig {
   /** Working directory for experiments (relative to project root) */
   experimentDir?: string;
   /** Minimal local security floor for command and path access */
-  security?: {
-    enabled?: boolean;
-    mode?: "audit" | "enforce";
-    commandPolicy?: {
-      allowPatterns?: string[];
-      reviewPatterns?: string[];
-      blockPatterns?: string[];
-    };
-    pathPolicy?: {
-      allowReadPaths?: string[];
-      allowWritePaths?: string[];
-      protectedPaths?: string[];
-    };
-  };
+  security?: SecurityConfig;
 }
 
 // ---------------------------------------------------------------------------

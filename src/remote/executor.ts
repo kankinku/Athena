@@ -1,5 +1,6 @@
 import { ConnectionPool } from "./connection-pool.js";
 import type { ExecResult, BackgroundProcess } from "./types.js";
+import type { SecurityExecutionContext } from "../security/policy.js";
 
 /**
  * High-level remote execution interface.
@@ -14,12 +15,13 @@ export class RemoteExecutor {
     machineId: string,
     command: string,
     timeoutMs?: number,
+    securityContext?: SecurityExecutionContext,
   ): Promise<ExecResult> {
     if (timeoutMs && machineId !== "local") {
       const wrappedCmd = `timeout ${Math.ceil(timeoutMs / 1000)} ${command}`;
-      return this.pool.exec(machineId, wrappedCmd);
+      return this.pool.exec(machineId, wrappedCmd, undefined, securityContext);
     }
-    return this.pool.exec(machineId, command, timeoutMs);
+    return this.pool.exec(machineId, command, timeoutMs, securityContext);
   }
 
   async execBackground(
@@ -27,11 +29,13 @@ export class RemoteExecutor {
     command: string,
     logPath?: string,
     opts?: { metricNames?: string[]; metricPatterns?: Record<string, string> },
+    securityContext?: SecurityExecutionContext,
   ): Promise<BackgroundProcess> {
     const result = await this.pool.execBackground(
       machineId,
       command,
       logPath,
+      securityContext,
     );
 
     const proc: BackgroundProcess = {
@@ -57,18 +61,31 @@ export class RemoteExecutor {
     machineId: string,
     path: string,
     lines = 50,
+    securityContext?: SecurityExecutionContext,
   ): Promise<string> {
-    return this.pool.tailFile(machineId, path, lines);
+    return this.pool.tailFile(machineId, path, lines, securityContext);
   }
 
-  async readExitCode(machineId: string, logPath: string): Promise<number | null> {
-    return this.pool.readBackgroundExitCode(machineId, logPath);
+  async readExitCode(
+    machineId: string,
+    logPath: string,
+    securityContext?: SecurityExecutionContext,
+  ): Promise<number | null> {
+    return this.pool.readBackgroundExitCode(machineId, logPath, securityContext);
   }
 
-  async gpuStatus(machineId: string): Promise<string> {
+  async gpuStatus(machineId: string, securityContext?: SecurityExecutionContext): Promise<string> {
     const result = await this.pool.exec(
       machineId,
       "nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader",
+      undefined,
+      {
+        ...securityContext,
+        machineId,
+        toolName: securityContext?.toolName ?? "gpu_status",
+        toolFamily: securityContext?.toolFamily ?? "shell",
+        networkAccess: securityContext?.networkAccess ?? machineId !== "local",
+      },
     );
     return result.stdout;
   }

@@ -380,6 +380,148 @@ const migrations: Migration[] = [
       ALTER TABLE simulation_runs ADD COLUMN log_path TEXT;
     `,
   },
+  {
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS security_decisions (
+        id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        verdict TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        matched_pattern TEXT,
+        intent TEXT,
+        actor_role TEXT,
+        session_id TEXT,
+        run_id TEXT,
+        machine_id TEXT,
+        tool_name TEXT,
+        tool_family TEXT,
+        network_access INTEGER,
+        destructive INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_decisions_created
+        ON security_decisions(created_at);
+      CREATE INDEX IF NOT EXISTS idx_security_decisions_session
+        ON security_decisions(session_id, run_id, created_at);
+    `,
+  },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS research_action_journal (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        state TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        lease_id TEXT,
+        summary TEXT NOT NULL,
+        payload_json TEXT,
+        result_json TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        heartbeat_at INTEGER,
+        UNIQUE(session_id, run_id, dedupe_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_action_journal_run
+        ON research_action_journal(session_id, run_id, updated_at);
+
+      CREATE TABLE IF NOT EXISTS research_run_leases (
+        lease_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        owner_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        acquired_at INTEGER NOT NULL,
+        heartbeat_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        released_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_run_leases_session
+        ON research_run_leases(session_id, status, heartbeat_at);
+
+      CREATE TABLE IF NOT EXISTS research_incidents (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        proposal_id TEXT,
+        experiment_id TEXT,
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT,
+        status TEXT NOT NULL,
+        action_required INTEGER NOT NULL DEFAULT 0,
+        related_action_id TEXT,
+        related_decision_id TEXT,
+        metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_incidents_session
+        ON research_incidents(session_id, status, severity, updated_at);
+    `,
+  },
+  {
+    version: 16,
+    sql: `
+      ALTER TABLE ingestion_sources ADD COLUMN evidence_health_json TEXT;
+    `,
+  },
+  {
+    version: 17,
+    sql: `
+      ALTER TABLE ingestion_sources ADD COLUMN source_digest TEXT;
+      ALTER TABLE ingestion_sources ADD COLUMN source_excerpt TEXT;
+    `,
+  },
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE research_action_journal_v2 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        state TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        lease_id TEXT,
+        summary TEXT NOT NULL,
+        payload_json TEXT,
+        result_json TEXT,
+        error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        heartbeat_at INTEGER
+      );
+      INSERT INTO research_action_journal_v2 (
+        id, session_id, run_id, action_type, state, dedupe_key, lease_id, summary,
+        payload_json, result_json, error, created_at, updated_at, heartbeat_at
+      )
+      SELECT
+        id, session_id, run_id, action_type, state, dedupe_key, lease_id, summary,
+        payload_json, result_json, error, created_at, updated_at, heartbeat_at
+      FROM research_action_journal;
+      DROP TABLE research_action_journal;
+      ALTER TABLE research_action_journal_v2 RENAME TO research_action_journal;
+      CREATE INDEX IF NOT EXISTS idx_research_action_journal_run
+        ON research_action_journal(session_id, run_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_research_action_journal_lookup
+        ON research_action_journal(session_id, run_id, dedupe_key, created_at DESC);
+    `,
+  },
+  {
+    version: 19,
+    sql: `
+      ALTER TABLE security_decisions ADD COLUMN actor_id TEXT;
+      ALTER TABLE security_decisions ADD COLUMN actor_tier TEXT;
+      ALTER TABLE security_decisions ADD COLUMN action_class TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

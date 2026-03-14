@@ -143,6 +143,30 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
 
 - latest_decision=n/a
 
+- open_incidents=0
+
+- review_queue=2
+
+## Evidence Health
+
+- source_count=1
+
+- claim_count=2
+
+- canonical_claim_count=1
+
+- contradiction_count=0
+
+- uncovered_claim_count=0
+
+- evidence_strength=0.78
+
+- model_confidence=0.78
+
+- confidence_separation=0
+
+- coverage_gaps=low_source_coverage
+
 ## Proposal Briefs
 
 - proposal-snapshot: Snapshot Proposal
@@ -154,6 +178,7 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
   code_change_scope: config
   decision_score: 0.7
   claim_support: evidence=0.80 freshness=0.70 contradiction=0.10 uncovered=0
+  evidence_health: evidence=0.00 model=0.00 separation=0.00 gaps=unresolved_claims=1|low_source_coverage|stale_evidence
   weighted_score: 0.74
   score_axes: expected_gain=0.8, evidence_strength=0.8, evidence_freshness=0.7, contradiction_pressure=0.1, memory_risk=0.2, stability_risk=0.2, integration_cost=0.3, rollback_difficulty=0.1, observability_readiness=0.6
   stop_conditions: loss regresses
@@ -162,8 +187,16 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
 ## Ingestion Sources
 
 - source-snapshot: docs; title=Snapshot ingestion; status=ingested; candidate=n/a; claim_count=2; canonical_claim_count=1; linked_proposal_count=1
+  digest: digest-1234
+  excerpt: [redacted in report output]
   extracted_claims: support:Measured telemetry shows runtime improved after batching writes.
   citations: sentence:1:runtime improved after batching writes
+
+## Supervision Queue
+
+- approval_needed: priority=80; status=candidate; id=proposal:proposal-snapshot; summary=Snapshot Proposal; action=athena research operate proposal-snapshot --kind proposal --action approve
+
+- approval_needed: priority=60; status=queued; id=improvement:imp-snapshot; summary=Research Strategy Improvement; action=athena research operate imp-snapshot --kind improvement --action promote
 
 ## Approval Queue
 

@@ -19,6 +19,10 @@ export function buildResearchReportInput(
   const messages = sessionStore.getMessages(sessionId, options.transcriptLimit ?? 200);
   const improvements = teamStore.listImprovementProposals(sessionId);
   const improvementEvaluations = teamStore.listImprovementEvaluations(sessionId);
+  const incidents = teamStore.listIncidents(sessionId);
+  const actionJournal = teamStore.listActionJournal(sessionId);
+  const reviewQueue = teamStore.listReviewQueue(sessionId);
+  const evidenceHealth = teamStore.buildEvidenceHealth(sessionId);
 
   const sections: string[] = [];
 
@@ -33,6 +37,21 @@ export function buildResearchReportInput(
     `- revisit_due=${revisitDue.length}`,
     `- open_triggers=${triggers.filter((trigger) => trigger.status === "open").length}`,
     `- latest_decision=${recentDecision?.decisionType ?? "n/a"}`,
+    `- open_incidents=${incidents.filter((incident) => incident.status === "open").length}`,
+    `- review_queue=${reviewQueue.length}`,
+  );
+
+  sections.push(
+    "## Evidence Health",
+    `- source_count=${evidenceHealth.sourceCount}`,
+    `- claim_count=${evidenceHealth.claimCount}`,
+    `- canonical_claim_count=${evidenceHealth.canonicalClaimCount}`,
+    `- contradiction_count=${evidenceHealth.contradictionCount}`,
+    `- uncovered_claim_count=${evidenceHealth.uncoveredClaimCount}`,
+    `- evidence_strength=${evidenceHealth.evidenceStrength}`,
+    `- model_confidence=${evidenceHealth.modelConfidence}`,
+    `- confidence_separation=${evidenceHealth.confidenceSeparation}`,
+    `- coverage_gaps=${evidenceHealth.coverageGaps.join(", ") || "n/a"}`,
   );
 
   if (recentDecision) {
@@ -100,6 +119,7 @@ export function buildResearchReportInput(
           proposal.claimSupport
             ? `  claim_support: evidence=${proposal.claimSupport.evidenceStrength.toFixed(2)} freshness=${proposal.claimSupport.freshnessScore.toFixed(2)} contradiction=${proposal.claimSupport.contradictionPressure.toFixed(2)} uncovered=${proposal.claimSupport.unresolvedClaims.length}`
             : null,
+          `  evidence_health: ${formatEvidenceHealth(teamStore.buildEvidenceHealth(sessionId, proposal.proposalId))}`,
           proposal.scorecard
             ? `  weighted_score: ${proposal.scorecard.weightedScore}`
             : null,
@@ -202,7 +222,7 @@ export function buildResearchReportInput(
       ...ingestion.map((source) => [
         `- ${source.sourceId}: ${source.sourceType}; title=${source.title}; status=${source.status}; candidate=${source.extractedCandidateId ?? "n/a"}; claim_count=${source.claimCount ?? 0}; canonical_claim_count=${source.canonicalClaims?.length ?? 0}; linked_proposal_count=${source.linkedProposalCount ?? 0}`,
         source.sourceDigest ? `  digest: ${source.sourceDigest}` : null,
-        source.sourceExcerpt ? `  excerpt: ${source.sourceExcerpt}` : null,
+        source.sourceExcerpt ? "  excerpt: [redacted in report output]" : null,
         source.extractedClaims?.length
           ? `  extracted_claims: ${source.extractedClaims.slice(0, 3).map((claim) => `${claim.disposition ?? "support"}:${claim.statement}`).join(" | ")}`
           : null,
@@ -219,6 +239,20 @@ export function buildResearchReportInput(
       ...budgetAnomalies.map(
         (item) => `- ${item.experimentId}: proposal=${item.proposalId}; decision=${item.decisionId ?? "n/a"}; findings=${item.findings.join(" | ") || "n/a"}`,
       ),
+    );
+  }
+
+  if (incidents.length > 0) {
+    sections.push(
+      "## Incidents",
+      ...incidents.map((incident) => `- ${incident.incidentId}: type=${incident.type}; severity=${incident.severity}; status=${incident.status}; run=${incident.runId}; proposal=${incident.proposalId ?? "n/a"}; summary=${incident.summary}`),
+    );
+  }
+
+  if (actionJournal.length > 0) {
+    sections.push(
+      "## Action Journal",
+      ...actionJournal.map((action) => `- ${action.actionId}: run=${action.runId}; type=${action.actionType}; state=${action.state}; summary=${action.summary}; error=${action.error ? "[redacted]" : "n/a"}`),
     );
   }
 
@@ -241,6 +275,13 @@ export function buildResearchReportInput(
     sections.push(
       "## Next Actions",
       ...nextActions.map((action) => `- ${action}`),
+    );
+  }
+
+  if (reviewQueue.length > 0) {
+    sections.push(
+      "## Supervision Queue",
+      ...reviewQueue.map((entry) => `- ${entry.kind}: priority=${entry.priority}; status=${entry.status}; id=${entry.id}; summary=${entry.summary}; action=${entry.actionHint}`),
     );
   }
 
@@ -326,4 +367,8 @@ function formatAutonomyPolicy(
   }
 
   return `  autonomy: risk=${policy.autonomyPolicy.maxRiskTier}; retry_cap=${policy.autonomyPolicy.maxRetryCount ?? "n/a"}; wall_min=${policy.autonomyPolicy.maxWallClockMinutes ?? "n/a"}; cost=${policy.autonomyPolicy.maxCostUsd ?? "n/a"}; evidence_floor=${policy.autonomyPolicy.requireEvidenceFloor ?? "n/a"}; rollback=${policy.autonomyPolicy.requireRollbackPlan ?? false}; machines=${policy.autonomyPolicy.allowedMachineIds?.join(",") ?? "n/a"}`;
+}
+
+function formatEvidenceHealth(health: import("./contracts.js").EvidenceHealthSummary): string {
+  return `evidence=${health.evidenceStrength.toFixed(2)} model=${health.modelConfidence.toFixed(2)} separation=${health.confidenceSeparation.toFixed(2)} gaps=${health.coverageGaps.join("|") || "n/a"}`;
 }

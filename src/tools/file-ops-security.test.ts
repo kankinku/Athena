@@ -30,3 +30,24 @@ test("write_file rejects protected system paths in enforce mode", async () => {
     /blocked this path/i,
   );
 });
+
+test("write_file respects capability-scoped write roots", async () => {
+  const tool = createWriteFileTool(
+    {
+      exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+    } as never,
+    new SecurityManager({
+      mode: "enforce",
+      capabilityPolicy: {
+        allowedMachineIds: ["local"],
+        allowedToolCategories: ["filesystem"],
+        allowedWritePathRoots: ["/workspace/project/tmp"],
+      },
+    }),
+  );
+
+  await assert.rejects(
+    tool.execute({ machine_id: "local", path: "/workspace/project/out.txt", content: "oops" }),
+    /outside approved write roots/i,
+  );
+});

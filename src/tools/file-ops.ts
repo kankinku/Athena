@@ -33,7 +33,14 @@ export function createReadFileTool(pool: ConnectionPool, securityManager?: Secur
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
-      securityManager?.assertPathAllowed(path, "read");
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId,
+        toolName: "read_file",
+        toolFamily: "filesystem" as const,
+        networkAccess: machineId !== "local",
+      };
+      securityManager?.assertPathAllowed(path, "read", securityContext);
       const offset = (args.offset as number) ?? 1;
       const limit = (args.limit as number) ?? 200;
 
@@ -41,6 +48,8 @@ export function createReadFileTool(pool: ConnectionPool, securityManager?: Secur
       const result = await pool.exec(
         machineId,
         `sed -n '${offset},${end}p' ${shellQuote(path)}`,
+        undefined,
+        securityContext,
       );
 
       if (result.exitCode !== 0) {
@@ -48,7 +57,7 @@ export function createReadFileTool(pool: ConnectionPool, securityManager?: Secur
       }
 
       // Count total lines for context
-      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`);
+      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`, undefined, securityContext);
       const totalLines = parseInt(wcResult.stdout.trim(), 10) || 0;
 
       return JSON.stringify({
@@ -89,14 +98,22 @@ export function createWriteFileTool(pool: ConnectionPool, securityManager?: Secu
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
-      securityManager?.assertPathAllowed(path, "write");
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId,
+        toolName: "write_file",
+        toolFamily: "filesystem" as const,
+        networkAccess: machineId !== "local",
+        destructive: true,
+      };
+      securityManager?.assertPathAllowed(path, "write", securityContext);
       const content = args.content as string;
       const append = (args.append as boolean) ?? false;
 
       // Ensure parent directory exists
       const dir = path.replace(/\/[^/]+$/, "");
       if (dir && dir !== path) {
-        await pool.exec(machineId, `mkdir -p ${shellQuote(dir)}`);
+        await pool.exec(machineId, `mkdir -p ${shellQuote(dir)}`, undefined, securityContext);
       }
 
       const op = append ? ">>" : ">";
@@ -107,13 +124,15 @@ export function createWriteFileTool(pool: ConnectionPool, securityManager?: Secu
       const result = await pool.exec(
         machineId,
         `cat ${op} ${shellQuote(path)} <<'${heredocTag}'\n${body}\n${heredocTag}`,
+        undefined,
+        securityContext,
       );
 
       if (result.exitCode !== 0) {
         return JSON.stringify({ error: result.stderr.trim() || `exit code ${result.exitCode}` });
       }
 
-      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`);
+      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`, undefined, securityContext);
       const totalLines = parseInt(wcResult.stdout.trim(), 10) || 0;
 
       return JSON.stringify({ written: path, lines: totalLines });
@@ -151,12 +170,20 @@ export function createPatchFileTool(pool: ConnectionPool, securityManager?: Secu
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
-      securityManager?.assertPathAllowed(path, "write");
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId,
+        toolName: "patch_file",
+        toolFamily: "filesystem" as const,
+        networkAccess: machineId !== "local",
+        destructive: true,
+      };
+      securityManager?.assertPathAllowed(path, "write", securityContext);
       const oldStr = args.old_string as string;
       const newStr = args.new_string as string;
 
       // Read current file
-      const readResult = await pool.exec(machineId, `cat ${shellQuote(path)}`);
+      const readResult = await pool.exec(machineId, `cat ${shellQuote(path)}`, undefined, securityContext);
       if (readResult.exitCode !== 0) {
         return JSON.stringify({ error: readResult.stderr.trim() || "Failed to read file" });
       }
@@ -180,6 +207,8 @@ export function createPatchFileTool(pool: ConnectionPool, securityManager?: Secu
       const writeResult = await pool.exec(
         machineId,
         `cat > ${shellQuote(path)} <<'${heredocTag}'\n${body}\n${heredocTag}`,
+        undefined,
+        securityContext,
       );
 
       if (writeResult.exitCode !== 0) {

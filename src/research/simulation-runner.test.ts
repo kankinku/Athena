@@ -164,3 +164,57 @@ test("SimulationRunner records launch_failed when branch preparation throws", as
     delete process.env.ATHENA_HOME;
   }
 });
+
+test("SimulationRunner budget enforcement terminates runs with destructive security context", async () => {
+  const { home, closeDb, teamStore, session } = await createRunnerHarness();
+  const execCalls: Array<{
+    machineId: string;
+    command: string;
+    securityContext?: {
+      actorRole?: string;
+      toolName?: string;
+      toolFamily?: string;
+      destructive?: boolean;
+      networkAccess?: boolean;
+    };
+  }> = [];
+
+  try {
+    const runner = new SimulationRunner(
+      {
+        execBackground: async () => ({ machineId: "local", pid: 1234, logPath: "log.txt" }),
+        isRunning: async () => true,
+        removeBackgroundProcess: () => {},
+      } as never,
+      {
+        exec: async (machineId: string, command: string, _timeoutMs?: number, securityContext?: Record<string, unknown>) => {
+          execCalls.push({ machineId, command, securityContext });
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      } as never,
+      { getTaskSummary: () => ({}) } as never,
+      { collectAll: async () => {}, removeSource: () => {} } as never,
+      { createBranch: async () => undefined } as never,
+      teamStore,
+      () => session.id,
+      () => ({ totalCostUsd: 0, lastInputTokens: 0 }),
+    );
+
+    await runner.launch(createCharter({ budget: { maxWallClockMinutes: 0, maxConcurrentRuns: 1 } }));
+    const exceeded = await runner.enforceBudgets();
+
+    assert.equal(exceeded.length, 1);
+    assert.equal(execCalls.length, 1);
+    assert.equal(execCalls[0]?.machineId, "local");
+    assert.equal(execCalls[0]?.command, "kill -TERM 1234");
+    assert.equal(execCalls[0]?.securityContext?.actorRole, "system");
+    assert.equal(execCalls[0]?.securityContext?.toolName, "budget_enforcer");
+    assert.equal(execCalls[0]?.securityContext?.toolFamily, "research-orchestration");
+    assert.equal(execCalls[0]?.securityContext?.destructive, true);
+    assert.equal(execCalls[0]?.securityContext?.networkAccess, false);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});

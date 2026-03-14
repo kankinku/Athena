@@ -8,6 +8,8 @@ import type { TaskInfo } from "../types.js";
 interface RuntimePollingState {
   activeResearchRun: TeamRunRecord | null;
   latestIngestionSource: IngestionSourceRecord | null;
+  openIncidentCount: number;
+  reviewQueueCount: number;
   metricData: Map<string, number[]>;
   resourceData: Map<string, MachineResources>;
   tasks: TaskInfo[];
@@ -15,7 +17,6 @@ interface RuntimePollingState {
 
 export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
   const {
-    automationManager,
     connectionPool,
     executor,
     experimentTracker,
@@ -32,6 +33,8 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
   const [resourceData, setResourceData] = useState<Map<string, MachineResources>>(new Map());
   const [activeResearchRun, setActiveResearchRun] = useState<TeamRunRecord | null>(null);
   const [latestIngestionSource, setLatestIngestionSource] = useState<IngestionSourceRecord | null>(null);
+  const [openIncidentCount, setOpenIncidentCount] = useState(0);
+  const [reviewQueueCount, setReviewQueueCount] = useState(0);
 
   useEffect(() => {
     const poll = async () => {
@@ -71,12 +74,15 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
 
       const sessionId = orchestrator.currentSession?.id;
       if (sessionId) {
-        await automationManager.tickSession(sessionId).catch(() => {});
         setActiveResearchRun(teamStore.listRecentTeamRuns(sessionId, 1)[0] ?? null);
         setLatestIngestionSource(teamStore.listIngestionSources(sessionId)[0] ?? null);
+        setOpenIncidentCount(teamStore.listOpenIncidents(sessionId).length);
+        setReviewQueueCount(teamStore.listReviewQueue(sessionId).length);
       } else {
         setActiveResearchRun(null);
         setLatestIngestionSource(null);
+        setOpenIncidentCount(0);
+        setReviewQueueCount(0);
       }
     };
 
@@ -97,7 +103,6 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
       }
     };
   }, [
-    automationManager,
     connectionPool,
     executor,
     experimentTracker,
@@ -112,6 +117,8 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
   return {
     activeResearchRun,
     latestIngestionSource,
+    openIncidentCount,
+    reviewQueueCount,
     metricData,
     resourceData,
     tasks,

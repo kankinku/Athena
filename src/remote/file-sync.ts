@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { promisify } from "node:util";
 import type { RemoteMachine } from "./types.js";
 import { commandExists } from "./local-runtime.js";
-import type { SecurityManager } from "../security/policy.js";
+import type { SecurityExecutionContext, SecurityManager } from "../security/policy.js";
 
 const execFileAsync = promisify(execFileCb);
 
@@ -44,12 +44,15 @@ export class FileSync {
     machineId: string,
     localPath: string,
     remotePath: string,
+    securityContext: SecurityExecutionContext = {},
   ): Promise<void> {
-    this.securityManager?.assertPathAllowed(localPath, "read");
-    this.securityManager?.assertPathAllowed(remotePath, "write");
+    const context = this.resolveSecurityContext(securityContext, machineId, "remote_upload");
+    this.securityManager?.assertPathAllowed(localPath, "read", context);
+    this.securityManager?.assertPathAllowed(remotePath, "write", context);
 
     const machine = this.getMachine(machineId);
     const transport = await resolveFileSyncTransport();
+    this.securityManager?.assertCommandAllowed(transport, context);
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
     if (transport === "rsync") {
@@ -76,12 +79,15 @@ export class FileSync {
     machineId: string,
     remotePath: string,
     localPath: string,
+    securityContext: SecurityExecutionContext = {},
   ): Promise<void> {
-    this.securityManager?.assertPathAllowed(remotePath, "read");
-    this.securityManager?.assertPathAllowed(localPath, "write");
+    const context = this.resolveSecurityContext(securityContext, machineId, "remote_download");
+    this.securityManager?.assertPathAllowed(remotePath, "read", context);
+    this.securityManager?.assertPathAllowed(localPath, "write", context);
 
     const machine = this.getMachine(machineId);
     const transport = await resolveFileSyncTransport();
+    this.securityManager?.assertCommandAllowed(transport, context);
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
     if (transport === "rsync") {
@@ -104,6 +110,21 @@ export class FileSync {
     const machine = this.machines.get(id);
     if (!machine) throw new Error(`Unknown machine: ${id}`);
     return machine;
+  }
+
+  private resolveSecurityContext(
+    securityContext: SecurityExecutionContext,
+    machineId: string,
+    defaultToolName: "remote_upload" | "remote_download",
+  ): SecurityExecutionContext {
+    return {
+      ...securityContext,
+      machineId,
+      toolName: securityContext.toolName ?? defaultToolName,
+      toolFamily: securityContext.toolFamily ?? "remote-sync",
+      networkAccess: securityContext.networkAccess ?? true,
+      destructive: securityContext.destructive ?? true,
+    };
   }
 
   private buildRsyncSshCommand(machine: RemoteMachine): string {

@@ -30,6 +30,19 @@ test("runMigrations upgrades a pre-workflow research schema to the latest resear
         updated_at INTEGER NOT NULL
       );
 
+      CREATE TABLE simulation_runs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        proposal_id TEXT NOT NULL,
+        task_key TEXT,
+        status TEXT NOT NULL,
+        charter_json TEXT NOT NULL,
+        budget_json TEXT,
+        result_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
       CREATE TABLE ingestion_sources (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -59,7 +72,7 @@ test("runMigrations upgrades a pre-workflow research schema to the latest resear
     const ingestionColumns = db.prepare("PRAGMA table_info(ingestion_sources)").all() as Array<{ name: string }>;
 
     const schemaVersion = db.prepare("SELECT MAX(version) AS version FROM _schema_version").get() as { version: number };
-    assert.equal(schemaVersion.version, 12);
+    assert.equal(schemaVersion.version, 19);
 
     assert.ok(teamRunColumns.some((column) => column.name === "workflow_state"));
     assert.ok(teamRunColumns.some((column) => column.name === "automation_policy_json"));
@@ -69,16 +82,31 @@ test("runMigrations upgrades a pre-workflow research schema to the latest resear
     assert.ok(teamRunColumns.some((column) => column.name === "automation_state_json"));
 
     assert.ok(ingestionColumns.some((column) => column.name === "canonical_claims_json"));
+    assert.ok(ingestionColumns.some((column) => column.name === "evidence_health_json"));
+    assert.ok(ingestionColumns.some((column) => column.name === "source_digest"));
+    assert.ok(ingestionColumns.some((column) => column.name === "source_excerpt"));
 
     const workflowTransitionsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflow_transitions'").get() as { name: string } | undefined;
     const automationCheckpointsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'automation_checkpoints'").get() as { name: string } | undefined;
     const improvementProposalsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'improvement_proposals'").get() as { name: string } | undefined;
     const improvementEvaluationsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'improvement_evaluations'").get() as { name: string } | undefined;
+    const securityDecisionsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'security_decisions'").get() as { name: string } | undefined;
+    const actionJournalExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'research_action_journal'").get() as { name: string } | undefined;
+    const runLeasesExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'research_run_leases'").get() as { name: string } | undefined;
+    const incidentsExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'research_incidents'").get() as { name: string } | undefined;
+    const securityColumns = db.prepare("PRAGMA table_info(security_decisions)").all() as Array<{ name: string }>;
 
     assert.equal(workflowTransitionsExists?.name, "workflow_transitions");
     assert.equal(automationCheckpointsExists?.name, "automation_checkpoints");
     assert.equal(improvementProposalsExists?.name, "improvement_proposals");
     assert.equal(improvementEvaluationsExists?.name, "improvement_evaluations");
+    assert.equal(securityDecisionsExists?.name, "security_decisions");
+    assert.equal(actionJournalExists?.name, "research_action_journal");
+    assert.equal(runLeasesExists?.name, "research_run_leases");
+    assert.equal(incidentsExists?.name, "research_incidents");
+    assert.ok(securityColumns.some((column) => column.name === "actor_id"));
+    assert.ok(securityColumns.some((column) => column.name === "actor_tier"));
+    assert.ok(securityColumns.some((column) => column.name === "action_class"));
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

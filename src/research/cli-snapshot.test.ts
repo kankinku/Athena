@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 const PROJECT_ROOT = process.cwd();
+const CLI_ENV = { ...process.env, ANTHROPIC_API_KEY: "test-key" };
 
 test("research CLI key operator views stay text-stable", async () => {
   const home = mkdtempSync(join(tmpdir(), "athena-cli-snapshot-"));
@@ -89,17 +90,17 @@ test("research CLI key operator views stay text-stable", async () => {
     const proposalsOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "proposals"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const improvementsOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "improvements"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
     const nextActionsOutput = execFileSync(
       process.execPath,
       ["--import", "tsx", "src/bootstrap.ts", "--home", home, "research", "next-actions"],
-      { cwd: PROJECT_ROOT, encoding: "utf8" },
+      { cwd: PROJECT_ROOT, encoding: "utf8", env: { ...CLI_ENV, ATHENA_HOME: home } },
     );
 
     assert.equal(
@@ -112,7 +113,7 @@ test("research CLI key operator views stay text-stable", async () => {
     );
     assert.equal(
       normalize(nextActionsOutput),
-      `run  ${run.id} continue workflow=draft stage=collection\nexperiment  proposal-cli prepare validation run`,
+      "approval_needed  improvement:imp-cli-snapshot athena research operate imp-cli-snapshot --kind improvement --action promote",
     );
   } finally {
     closeDb();

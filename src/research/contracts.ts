@@ -109,6 +109,19 @@ export interface ClaimSupportSummary {
   unresolvedClaims: string[];
 }
 
+export interface EvidenceHealthSummary {
+  sourceCount: number;
+  claimCount: number;
+  canonicalClaimCount: number;
+  contradictionCount: number;
+  uncoveredClaimCount: number;
+  freshnessScore: number;
+  evidenceStrength: number;
+  modelConfidence: number;
+  confidenceSeparation: number;
+  coverageGaps: string[];
+}
+
 export interface DecisionDriftRecord {
   initialDecision?: DecisionType;
   simulationDecision?: DecisionType;
@@ -355,6 +368,7 @@ export interface IngestionSourceRecord {
   canonicalClaims?: CanonicalClaim[];
   sourceDigest?: string;
   sourceExcerpt?: string;
+  evidenceHealth?: EvidenceHealthSummary;
   createdAt: number;
   updatedAt: number;
 }
@@ -384,6 +398,106 @@ export interface TeamRunRecord {
   latestOutput?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
+}
+
+export type ActionJournalState =
+  | "pending"
+  | "issued"
+  | "running"
+  | "verifying"
+  | "committed"
+  | "needs_recovery";
+
+export type ActionJournalType =
+  | "session_recovery"
+  | "session_tick"
+  | "simulation_launch"
+  | "simulation_finalize"
+  | "simulation_budget_enforcement"
+  | "automation_retry"
+  | "operator_resume"
+  | "operator_rollback";
+
+export interface ActionJournalRecord {
+  actionId: string;
+  sessionId: string;
+  runId: string;
+  actionType: ActionJournalType;
+  state: ActionJournalState;
+  dedupeKey: string;
+  leaseId?: string;
+  summary: string;
+  payload?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  heartbeatAt?: number;
+}
+
+export type RunLeaseStatus = "active" | "released" | "expired";
+
+export interface RunLeaseRecord {
+  leaseId: string;
+  sessionId: string;
+  runId: string;
+  ownerId: string;
+  status: RunLeaseStatus;
+  acquiredAt: number;
+  heartbeatAt: number;
+  expiresAt: number;
+  releasedAt?: number;
+}
+
+export type IncidentSeverity = "info" | "warning" | "critical";
+
+export type IncidentType =
+  | "automation_block"
+  | "retry_exhausted"
+  | "recovery_needed"
+  | "budget_exceeded"
+  | "simulation_crash"
+  | "policy_denial"
+  | "rollback_candidate"
+  | "stalled_run"
+  | "evidence_gap";
+
+export interface IncidentRecord {
+  incidentId: string;
+  sessionId: string;
+  runId: string;
+  proposalId?: string;
+  experimentId?: string;
+  type: IncidentType;
+  severity: IncidentSeverity;
+  summary: string;
+  details?: string;
+  status: "open" | "acknowledged" | "resolved";
+  actionRequired: boolean;
+  relatedActionId?: string;
+  relatedDecisionId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ReviewQueueKind =
+  | "approval_needed"
+  | "blocked"
+  | "revisit_due"
+  | "recovery_needed"
+  | "rollback_candidate";
+
+export interface ReviewQueueEntry {
+  id: string;
+  kind: ReviewQueueKind;
+  runId?: string;
+  proposalId?: string;
+  experimentId?: string;
+  priority: number;
+  status: string;
+  summary: string;
+  actionHint: string;
 }
 
 export interface WorkflowTransitionRecord {

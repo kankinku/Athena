@@ -2,7 +2,7 @@ import type { ToolDefinition } from "../providers/types.js";
 import type { FileSync } from "../remote/file-sync.js";
 import type { SecurityManager } from "../security/policy.js";
 
-export function createUploadTool(fileSync: FileSync, securityManager?: SecurityManager): ToolDefinition {
+export function createUploadTool(fileSync: FileSync, _securityManager?: SecurityManager): ToolDefinition {
   return {
     name: "remote_upload",
     description: "Upload files from local machine to a remote machine via rsync.",
@@ -25,12 +25,19 @@ export function createUploadTool(fileSync: FileSync, securityManager?: SecurityM
       required: ["machine_id", "local_path", "remote_path"],
     },
     execute: async (args) => {
-      securityManager?.assertPathAllowed(args.local_path as string, "read");
-      securityManager?.assertPathAllowed(args.remote_path as string, "write");
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId: args.machine_id as string,
+        toolName: "remote_upload",
+        toolFamily: "remote-sync" as const,
+        networkAccess: true,
+        destructive: true,
+      };
       await fileSync.upload(
         args.machine_id as string,
         args.local_path as string,
         args.remote_path as string,
+        securityContext,
       );
       return `Uploaded ${args.local_path} to ${args.machine_id}:${args.remote_path}`;
     },
@@ -39,7 +46,7 @@ export function createUploadTool(fileSync: FileSync, securityManager?: SecurityM
 
 export function createDownloadTool(
   fileSync: FileSync,
-  securityManager?: SecurityManager,
+  _securityManager?: SecurityManager,
 ): ToolDefinition {
   return {
     name: "remote_download",
@@ -64,12 +71,19 @@ export function createDownloadTool(
       required: ["machine_id", "remote_path", "local_path"],
     },
     execute: async (args) => {
-      securityManager?.assertPathAllowed(args.remote_path as string, "read");
-      securityManager?.assertPathAllowed(args.local_path as string, "write");
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId: args.machine_id as string,
+        toolName: "remote_download",
+        toolFamily: "remote-sync" as const,
+        networkAccess: true,
+        destructive: true,
+      };
       await fileSync.download(
         args.machine_id as string,
         args.remote_path as string,
         args.local_path as string,
+        securityContext,
       );
       return `Downloaded ${args.machine_id}:${args.remote_path} to ${args.local_path}`;
     },

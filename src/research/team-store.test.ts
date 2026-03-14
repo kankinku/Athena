@@ -260,6 +260,95 @@ test("TeamStore delegates simulation persistence without changing behavior", asy
   }
 });
 
+test("TeamStore scopes proposal evidence health to the proposal-linked sources", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-evidence-health-"));
+  process.env.ATHENA_HOME = home;
+
+  const [{ SessionStore }, { TeamStore }, { closeDb }] = await Promise.all([
+    import("../store/session-store.js"),
+    import("./team-store.js"),
+    import("../store/database.js"),
+  ]);
+
+  try {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+
+    teamStore.saveIngestionSource(session.id, {
+      sourceId: "source-a",
+      sourceType: "manual",
+      title: "Source A",
+      status: "ingested",
+      claimCount: 1,
+      canonicalClaims: [{
+        canonicalClaimId: "claim-a",
+        semanticKey: "claim-a",
+        statement: "Source A claim",
+        normalizedStatement: "source a claim",
+        sourceClaimIds: ["source-a-claim-1"],
+        evidenceIds: ["evidence-a"],
+        supportTags: ["latency"],
+        contradictionTags: [],
+        sourceIds: ["source-a"],
+        confidence: 0.9,
+        freshnessScore: 0.8,
+      }],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    teamStore.saveIngestionSource(session.id, {
+      sourceId: "source-b",
+      sourceType: "manual",
+      title: "Source B",
+      status: "ingested",
+      claimCount: 1,
+      canonicalClaims: [{
+        canonicalClaimId: "claim-b",
+        semanticKey: "claim-b",
+        statement: "Source B claim",
+        normalizedStatement: "source b claim",
+        sourceClaimIds: ["source-b-claim-1"],
+        evidenceIds: ["evidence-b"],
+        supportTags: ["memory"],
+        contradictionTags: ["rollback"],
+        sourceIds: ["source-b"],
+        confidence: 0.5,
+        freshnessScore: 0.5,
+      }],
+      createdAt: 2,
+      updatedAt: 2,
+    });
+
+    teamStore.saveProposalBrief(session.id, {
+      proposalId: "proposal-a",
+      title: "Proposal A",
+      summary: "Uses only source A",
+      targetModules: ["trainer"],
+      expectedGain: "high",
+      expectedRisk: "low",
+      codeChangeScope: ["config"],
+      status: "candidate",
+      experimentBudget: {},
+      stopConditions: [],
+      reconsiderConditions: [],
+      claimIds: ["claim-a"],
+    });
+
+    const evidenceHealth = teamStore.buildEvidenceHealth(session.id, "proposal-a");
+
+    assert.equal(evidenceHealth.sourceCount, 1);
+    assert.equal(evidenceHealth.claimCount, 1);
+    assert.equal(evidenceHealth.canonicalClaimCount, 1);
+    assert.equal(evidenceHealth.contradictionCount, 0);
+    assert.equal(evidenceHealth.modelConfidence, 0.9);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
 test("TeamStore delegates proposal persistence without changing behavior", async () => {
   const home = mkdtempSync(join(tmpdir(), "athena-proposal-store-"));
   process.env.ATHENA_HOME = home;

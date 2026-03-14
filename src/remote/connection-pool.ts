@@ -9,7 +9,7 @@ import {
   getLocalShell,
   getLocalShellCommand,
 } from "./local-runtime.js";
-import type { SecurityManager } from "../security/policy.js";
+import type { SecurityExecutionContext, SecurityManager } from "../security/policy.js";
 import type {
   RemoteMachine,
   ExecResult,
@@ -145,36 +145,14 @@ export class ConnectionPool {
     machineId: string,
     command: string,
     timeoutMs?: number,
+    securityContext: SecurityExecutionContext = {},
   ): Promise<ExecResult> {
-    this.securityManager?.assertCommandAllowed(command);
+    this.securityManager?.assertCommandAllowed(command, { ...securityContext, machineId });
 
     if (machineId === "local") {
       return this.execLocal(command, timeoutMs);
     }
-    const conn = await this.getConnection(machineId);
-    conn.lastUsedAt = Date.now();
-
-    return new Promise((resolve, reject) => {
-      conn.client!.exec(command, (err, stream) => {
-        if (err) return reject(err);
-
-        let stdout = "";
-        let stderr = "";
-
-        stream.on("data", (data: Buffer) => {
-          stdout += data.toString();
-        });
-        stream.stderr.on("data", (data: Buffer) => {
-          stderr += data.toString();
-        });
-        stream.on("error", (streamErr: Error) => {
-          reject(streamErr);
-        });
-        stream.on("close", (code: number) => {
-          resolve({ stdout, stderr, exitCode: code ?? 0 });
-        });
-      });
-    });
+    return this.execRemoteUnchecked(machineId, command);
   }
 
   private execLocal(command: string, timeoutMs = 300_000): Promise<ExecResult> {
@@ -205,8 +183,9 @@ export class ConnectionPool {
     machineId: string,
     command: string,
     logPath?: string,
+    securityContext: SecurityExecutionContext = {},
   ): Promise<{ pid: number; logPath: string }> {
-    this.securityManager?.assertCommandAllowed(command);
+    this.securityManager?.assertCommandAllowed(command, { ...securityContext, machineId });
 
     const log = logPath ?? createTempLogPath();
 
@@ -218,7 +197,7 @@ export class ConnectionPool {
     // PYTHONUNBUFFERED ensures Python flushes stdout immediately for live metric capture
     // Write exit code to .exit file so we can retrieve it later (can't use `wait` from a different shell)
     const wrappedCmd = `PYTHONUNBUFFERED=1 nohup sh -c '${command.replace(/'/g, "'\\''")}; echo $? > ${log}.exit' > ${log} 2>&1 & echo $!`;
-    const result = await this.exec(machineId, wrappedCmd);
+    const result = await this.execRemoteUnchecked(machineId, wrappedCmd);
     const pid = parseInt(result.stdout.trim().split("\n").pop() ?? "", 10);
     if (isNaN(pid)) {
       throw new Error(
@@ -306,17 +285,40 @@ export class ConnectionPool {
     machineId: string,
     path: string,
     lines = 50,
+    securityContext: SecurityExecutionContext = {},
   ): Promise<string> {
+    const context = {
+      ...securityContext,
+      machineId,
+      toolName: securityContext.toolName ?? "tail_file",
+      toolFamily: securityContext.toolFamily ?? "filesystem",
+      networkAccess: securityContext.networkAccess ?? machineId !== "local",
+    };
+    this.securityManager?.assertPathAllowed(path, "read", context);
+
     if (machineId === "local") {
       const content = await readFile(path, "utf8");
       return content.split(/\r?\n/).slice(-lines).join("\n");
     }
-    const result = await this.exec(machineId, `tail -n ${lines} ${shellQuote(path)}`);
+    const result = await this.exec(machineId, `tail -n ${lines} ${shellQuote(path)}`, undefined, context);
     return result.stdout;
   }
 
-  async readBackgroundExitCode(machineId: string, logPath: string): Promise<number | null> {
+  async readBackgroundExitCode(
+    machineId: string,
+    logPath: string,
+    securityContext: SecurityExecutionContext = {},
+  ): Promise<number | null> {
     const exitPath = getExitFilePath(logPath);
+    const context = {
+      ...securityContext,
+      machineId,
+      toolName: securityContext.toolName ?? "read_background_exit_code",
+      toolFamily: securityContext.toolFamily ?? "filesystem",
+      networkAccess: securityContext.networkAccess ?? machineId !== "local",
+    };
+    this.securityManager?.assertPathAllowed(exitPath, "read", context);
+
     if (machineId === "local") {
       try {
         const value = await readFile(exitPath, "utf8");
@@ -330,6 +332,8 @@ export class ConnectionPool {
     const result = await this.exec(
       machineId,
       `[ -f ${shellQuote(exitPath)} ] && cat ${shellQuote(exitPath)} || true`,
+      undefined,
+      context,
     );
     const parsed = Number.parseInt(result.stdout.trim(), 10);
     return Number.isNaN(parsed) ? null : parsed;
@@ -382,5 +386,32 @@ export class ConnectionPool {
       throw new Error(`Cannot connect to ${machineId}`);
     }
     return conn;
+  }
+
+  private async execRemoteUnchecked(machineId: string, command: string): Promise<ExecResult> {
+    const conn = await this.getConnection(machineId);
+    conn.lastUsedAt = Date.now();
+
+    return new Promise((resolve, reject) => {
+      conn.client!.exec(command, (err, stream) => {
+        if (err) return reject(err);
+
+        let stdout = "";
+        let stderr = "";
+
+        stream.on("data", (data: Buffer) => {
+          stdout += data.toString();
+        });
+        stream.stderr.on("data", (data: Buffer) => {
+          stderr += data.toString();
+        });
+        stream.on("error", (streamErr: Error) => {
+          reject(streamErr);
+        });
+        stream.on("close", (code: number) => {
+          resolve({ stdout, stderr, exitCode: code ?? 0 });
+        });
+      });
+    });
   }
 }

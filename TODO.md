@@ -62,8 +62,8 @@ Notes:
   - [x] Surface autonomy envelope in CLI, reports, and TUI
   - [x] Remove synthetic operator-approval startup semantics from autonomous flow
   - [x] Enforce stage timeout and stage-start timing in automation runtime
-  - [ ] Add durable action journal and replay-safe recovery for autonomous runs
-  - [ ] Add formal capability/RBAC-backed security policy for autonomous execution
+  - [x] Add durable action journal and replay-safe recovery for autonomous runs
+  - [x] Add formal capability/RBAC-backed security policy for autonomous execution
   - [ ] Add long-running multi-host soak validation for autonomous mode
 
 ## Operator-Supervised Production Roadmap
@@ -79,65 +79,67 @@ Execution rule:
 
 ## Step 9
 
-- [ ] Ship a formal security and permission model for operator-supervised runs
-- [ ] Add `src/security/contracts.ts` for capability, role, and policy decision types
-- [ ] Upgrade `src/security/policy.ts` from regex floor to capability-aware enforcement
-- [ ] Define run-scoped capabilities for machines, workspaces, path roots, command classes, network access, and destructive actions
-- [ ] Add `src/security/audit-store.ts` plus migrations for decision and override persistence
-- [ ] Enforce security policy in file ops, remote sync/exec, and research orchestration entry points
-- [ ] Expose the active capability envelope in operator-facing CLI views
-- [ ] Add regression tests for allow/review/block, protected writes, and operator overrides
-- [ ] Exit gate: no high-risk execution path runs without an explicit, persisted policy decision
+- [~] Ship a formal security and permission model for operator-supervised runs
+- [x] Add `src/security/contracts.ts` for capability, role, and policy decision types
+- [x] Upgrade `src/security/policy.ts` from regex floor to capability-aware enforcement
+- [x] Add formal actor/RBAC bindings, tier rules, and audited operator action classes
+- [x] Define run-scoped capabilities for machines, workspaces, path roots, command classes, network access, and destructive actions
+- [x] Add `src/security/audit-store.ts` plus migrations for decision and override persistence
+- [x] Enforce security policy in file ops, remote sync/exec, and research orchestration entry points
+- [x] Expose the active capability envelope in operator-facing CLI views
+- [x] Add regression tests for allow/review/block, protected writes, and operator overrides
+- [ ] Exit gate: no high-risk execution path runs without an explicit, persisted policy decision in real supervised soak runs
 
 ## Step 10
 
-- [ ] Harden durable runtime execution for long-running supervised research sessions
-- [ ] Add `src/research/action-journal-store.ts` and migrations for persisted action lifecycle state
-- [ ] Record action states: `pending`, `issued`, `running`, `verifying`, `committed`, `needs_recovery`
-- [ ] Add run leases and heartbeats for active runtime ownership
-- [ ] Make replay and recovery idempotent across restart, disconnect, and partial completion
-- [ ] Separate run-level retry logic from action-level retry logic
-- [ ] Extend automation manager, orchestrator, simulation runner, and scheduler to use the journal
-- [ ] Add crash-recovery, restart, and partial-action replay integration tests
-- [ ] Exit gate: a restart never loses the authoritative next action for an active supervised run
+- [x] Harden durable runtime execution for long-running supervised research sessions
+- [x] Add `src/research/action-journal-store.ts` and migrations for persisted action lifecycle state
+- [x] Record action states: `pending`, `issued`, `running`, `verifying`, `committed`, `needs_recovery`
+- [x] Add run leases and heartbeats for active runtime ownership
+- [x] Make replay and recovery idempotent across restart, disconnect, and partial completion
+- [x] Separate run-level retry logic from action-level retry logic
+- [x] Extend automation manager, orchestrator, simulation runner, and scheduler to use the journal
+- [x] Add crash-recovery, restart, and partial-action replay integration tests
+- [x] Exit gate: a restart never loses the authoritative next action for an active supervised run
 
 ## Step 11
 
-- [ ] Build evidence-grade ingestion and attribution for production decisions
-- [ ] Add stronger source adapters for URL, document, PDF, plain text, and repo snapshot ingestion
-- [ ] Persist citation spans, source attribution, and evidence freshness consistently across repeated ingests
-- [ ] Strengthen canonical claim dedupe and evidence reconciliation across multiple ingestion waves
-- [ ] Distinguish model confidence from evidence strength in operator-facing summaries
-- [ ] Add contradiction tracking and evidence coverage gaps to ingestion and reporting outputs
-- [ ] Add ingestion regression tests for citation fidelity, claim dedupe, contradiction capture, and evidence lineage
-- [ ] Exit gate: every proposal/report shown to operators can point to attributable evidence with locator and contradiction context
+- [x] Build evidence-grade ingestion and attribution for production decisions
+- [x] Add stronger source adapters for URL, document, PDF, plain text, and repo snapshot ingestion
+- [x] Persist citation spans, source attribution, and evidence freshness consistently across repeated ingests
+- [x] Strengthen canonical claim dedupe and evidence reconciliation across multiple ingestion waves
+- [x] Distinguish model confidence from evidence strength in operator-facing summaries
+- [x] Add contradiction tracking and evidence coverage gaps to ingestion and reporting outputs
+- [x] Add ingestion regression tests for citation fidelity, claim dedupe, contradiction capture, and evidence lineage
+- [x] Exit gate: every proposal/report shown to operators can point to attributable evidence with locator and contradiction context
 
 ## Step 12
 
-- [ ] Complete operator supervision surfaces for real operations
-- [ ] Add review queues for approvals, blocked runs, revisit requests, recovery-needed runs, and rollback candidates
-- [ ] Expand TUI/CLI run visibility with incident-focused drill-down for automation blocks, workflow history, and policy decisions
-- [ ] Add operator actions for approve, defer, resume, rollback, and archive from the same supervision surface
-- [ ] Surface budget burn, timeout risk, evidence quality, and policy state as first-class indicators
-- [ ] Add end-to-end tests for operator review and intervention flows
-- [ ] Exit gate: operators can identify what needs attention and act on it without reading source code or raw DB state
+- [x] Complete operator supervision surfaces for real operations
+- [x] Add review queues for approvals, blocked runs, revisit requests, recovery-needed runs, and rollback candidates
+- [x] Expand TUI/CLI run visibility with incident-focused drill-down for automation blocks, workflow history, and policy decisions
+- [x] Add operator actions for approve, defer, resume, rollback, and archive from the same supervision surface
+- [x] Surface budget burn, timeout risk, evidence quality, and policy state as first-class indicators
+- [x] Add end-to-end tests for operator review and intervention flows
+- [x] Exit gate: operators can identify what needs attention and act on it without reading source code or raw DB state
 
 ## Step 13
 
-- [ ] Add production observability, evals, and incident review loops
-- [ ] Persist traceable run/action history suitable for incident reconstruction
-- [ ] Add task-level eval fixtures for proposal quality, simulation quality, report quality, and operator intervention correctness
-- [ ] Add automated regression suites for failure modes, unsafe transitions, and policy bypass attempts
-- [ ] Add alertable signals for repeated retries, stalled runs, recovery loops, and permission denials
-- [ ] Add operator-facing incident and postmortem artifacts for failed or rolled-back runs
-- [ ] Exit gate: every major failure mode has both a detection signal and a reproducible regression path
+- [~] Add production observability, evals, and incident review loops
+- [x] Persist traceable run/action history suitable for incident reconstruction
+- [x] Add task-level eval fixtures for proposal quality, simulation quality, report quality, and operator intervention correctness
+- [x] Add automated regression suites for failure modes, unsafe transitions, and policy bypass attempts
+- [x] Add alertable signals for repeated retries, stalled runs, recovery loops, and permission denials
+- [x] Add operator-facing incident and postmortem artifacts for failed or rolled-back runs
+- [ ] Exit gate: every major failure mode has both a detection signal and a reproducible regression path under sustained soak evidence
 
 ## Step 14
 
-- [ ] Validate supervised production readiness under sustained load
+- [~] Validate supervised production readiness under sustained load
 - [ ] Run long-duration soak tests across local-only, single-remote, and multi-host execution paths
-- [ ] Add network interruption, remote host loss, process restart, stuck action, and partial-result recovery scenarios
-- [ ] Validate checkpoint, resume, retry, and rollback behavior under induced failures
+- [x] Add network interruption, remote host loss, process restart, stuck action, and partial-result recovery scenarios
+- [x] Validate checkpoint, resume, retry, and rollback behavior under induced failures
 - [ ] Measure and document operational SLOs for completion, recovery, rollback, and operator response
-- [ ] Produce a documented supervised-production checklist with pass/fail evidence
+- [x] Produce a documented supervised-production checklist with pass/fail evidence
+- [x] Record the current non-green supervised-production evidence snapshot and blocked remote-topology checklist result
 - [ ] Exit only when the supervised production checklist is green and documented

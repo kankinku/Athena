@@ -7,7 +7,7 @@ import { Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
 const view = Args.text({ name: "view" }).pipe(
-  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|next-actions"),
+  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|queue|incidents|journal|operate|evals|checklist|soak|next-actions"),
 );
 
 const target = Args.text({ name: "target" }).pipe(
@@ -31,7 +31,7 @@ const recent = Options.boolean("recent").pipe(
 );
 
 const kind = Options.text("kind").pipe(
-  Options.withDescription("Review target kind: proposal|improvement"),
+  Options.withDescription("Review/operate target kind: run|proposal|improvement"),
   Options.optional,
 );
 
@@ -41,7 +41,7 @@ const action = Options.text("action").pipe(
 );
 
 const inputType = Options.text("type").pipe(
-  Options.withDescription("For ingest: url|document|text"),
+  Options.withDescription("For ingest: url|document|text|repo"),
   Options.optional,
 );
 
@@ -60,10 +60,15 @@ const runId = Options.text("run").pipe(
   Options.optional,
 );
 
+const actor = Options.text("actor").pipe(
+  Options.withDescription("Operator actor id used for RBAC and audit"),
+  Options.optional,
+);
+
 export const research = Command.make(
   "research",
-  { view, target, state, tag, recent, kind, action, inputType, problemArea, title, runId },
-  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent, kind: kindOpt, action: actionOpt, inputType: inputTypeOpt, problemArea: problemAreaOpt, title: titleOpt, runId: runIdOpt }) =>
+  { view, target, state, tag, recent, kind, action, inputType, problemArea, title, runId, actor },
+  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent, kind: kindOpt, action: actionOpt, inputType: inputTypeOpt, problemArea: problemAreaOpt, title: titleOpt, runId: runIdOpt, actor: actorOpt }) =>
     Effect.promise(async () => {
       const target = Option.getOrUndefined(targetOpt);
       const state = Option.getOrUndefined(stateOpt);
@@ -74,6 +79,7 @@ export const research = Command.make(
       const problemArea = Option.getOrUndefined(problemAreaOpt);
       const sourceTitle = Option.getOrUndefined(titleOpt);
       const targetRunId = Option.getOrUndefined(runIdOpt);
+      const actorId = Option.getOrUndefined(actorOpt) ?? process.env.ATHENA_OPERATOR_ID ?? "operator:local";
       const { createRuntime } = await import("../init.js");
       const runtime = await createRuntime();
       const { IngestionService } = await import("../research/ingestion-service.js");
@@ -101,9 +107,7 @@ export const research = Command.make(
           }
           case "workflow": {
             const runs = runtime.teamStore.listRecentTeamRuns(resolvedSessionId, 20);
-            const run = target
-              ? runs.find((item) => item.id === target) ?? runtime.teamStore.getTeamRun(target)
-              : runs[0];
+            const run = target ? runs.find((item) => item.id === target) : runs[0];
             if (!run) {
               console.error("Usage: athena research workflow <run-id>");
               process.exit(1);
@@ -120,9 +124,7 @@ export const research = Command.make(
           }
           case "automation": {
             const runs = runtime.teamStore.listRecentTeamRuns(resolvedSessionId, 20);
-            const run = target
-              ? runs.find((item) => item.id === target) ?? runtime.teamStore.getTeamRun(target)
-              : runs[0];
+            const run = target ? runs.find((item) => item.id === target) : runs[0];
             if (!run) {
               console.error("Usage: athena research automation <run-id>");
               process.exit(1);
@@ -190,9 +192,10 @@ export const research = Command.make(
               printLines([
                 `${source.sourceId}  ${source.sourceType.padEnd(10)} ${source.status.padEnd(10)} ${source.title}`,
                 `claims  ${source.claimCount ?? 0} canonical=${source.canonicalClaims?.length ?? 0} linked=${source.linkedProposalCount ?? 0}`,
-                `evidence  confidence=${source.evidenceConfidence ?? "n/a"} freshness=${source.freshnessScore ?? "n/a"}`,
+                `evidence  strength=${source.evidenceConfidence ?? "n/a"} freshness=${source.freshnessScore ?? "n/a"} model_conf=${source.evidenceHealth?.modelConfidence ?? "n/a"} separation=${source.evidenceHealth?.confidenceSeparation ?? "n/a"}`,
+                `coverage  gaps=${source.evidenceHealth?.coverageGaps.join(", ") || "n/a"} contradiction_count=${source.evidenceHealth?.contradictionCount ?? 0}`,
                 `digest  ${source.sourceDigest ?? "n/a"}`,
-                `excerpt  ${source.sourceExcerpt ?? source.notes ?? "n/a"}`,
+                "excerpt  [redacted in CLI output]",
                 ...(source.extractedClaims ?? []).slice(0, 5).map((claim) => `claim  ${claim.disposition ?? "support"} confidence=${claim.confidence ?? "n/a"} ${claim.statement}`),
                 ...(source.extractedClaims ?? []).slice(0, 3).flatMap((claim) =>
                   (claim.citationSpans ?? []).slice(0, 1).map((span) => `citation  ${span.locator ?? "n/a"} ${span.text}`),
@@ -208,9 +211,17 @@ export const research = Command.make(
               console.error("Usage: athena research ingest <value> --type url|document|text --problem-area <area> [--title <title>] [--run <run-id>]");
               process.exit(1);
             }
-            const ingestionService = new IngestionService(runtime.teamStore, runtime.teamOrchestrator);
+            runtime.securityManager.assertActionAllowed("ingest", {
+              actorRole: "operator",
+              actorId,
+              sessionId: resolvedSessionId,
+              runId: targetRunId,
+              toolName: "research_ingest",
+              toolFamily: "research-orchestration",
+            });
+            const ingestionService = new IngestionService(runtime.teamStore, runtime.teamOrchestrator, runtime.securityManager);
             const result = await ingestionService.ingest({
-              inputType: inputType as "url" | "document" | "text",
+              inputType: inputType as "url" | "document" | "text" | "repo",
               value: target,
               problemArea,
               title: sourceTitle,
@@ -220,7 +231,7 @@ export const research = Command.make(
             printLines([
               `run  ${result.run.id} workflow=${result.run.workflowState} stage=${result.run.currentStage}`,
               `source  ${result.source.sourceId} ${result.source.sourceType} ${result.source.status} ${result.source.title}`,
-              `claims  extracted=${result.pack.claims.length} canonical=${result.pack.canonicalClaims?.length ?? 0} contradictions=${result.pack.counterEvidence.length}`,
+              `claims  extracted=${result.pack.claims.length} canonical=${result.pack.canonicalClaims?.length ?? 0} contradictions=${result.pack.counterEvidence.length} gaps=${result.source.evidenceHealth?.coverageGaps.join(", ") || "n/a"}`,
               ...result.pack.claims.slice(0, 5).map((claim) => `claim  ${claim.disposition ?? "support"} confidence=${claim.confidence ?? "n/a"} ${claim.statement}`),
             ]);
             return;
@@ -242,6 +253,7 @@ export const research = Command.make(
             const proposal = runtime.teamStore.getProposalBrief(resolvedSessionId, target);
             const latestDecision = runtime.teamStore.getLatestDecisionRecord(resolvedSessionId, target);
             const latestResult = runtime.teamStore.listRecentSimulationRuns(resolvedSessionId, 50).find((simulation) => simulation.proposalId === target)?.result;
+            const evidenceHealth = runtime.teamStore.buildEvidenceHealth(resolvedSessionId, target);
             if (!proposal?.scorecard) {
               console.error(`No scorecard found for proposal: ${target}`);
               process.exit(1);
@@ -252,6 +264,7 @@ export const research = Command.make(
               proposal.claimSupport
                 ? `claim_support  evidence=${proposal.claimSupport.evidenceStrength.toFixed(2)} freshness=${proposal.claimSupport.freshnessScore.toFixed(2)} contradiction=${proposal.claimSupport.contradictionPressure.toFixed(2)} source_coverage=${proposal.claimSupport.sourceCoverage.toFixed(2)} unresolved=${proposal.claimSupport.unresolvedClaims.length}`
                 : "claim_support  n/a",
+              `evidence_health  model_conf=${evidenceHealth.modelConfidence.toFixed(2)} separation=${evidenceHealth.confidenceSeparation.toFixed(2)} gaps=${evidenceHealth.coverageGaps.join(", ") || "n/a"}`,
               `decision  ${latestDecision?.decisionType ?? "n/a"} confidence=${latestDecision?.confidence ?? "n/a"}`,
               `latest_result  ${latestResult?.outcomeStatus ?? "n/a"}`,
             ]);
@@ -265,6 +278,206 @@ export const research = Command.make(
             const anomalies = runtime.teamStore.listBudgetAnomalies(resolvedSessionId);
             printLines(anomalies.map((item) => `${item.experimentId}  proposal=${item.proposalId} decision=${item.decisionId ?? "n/a"}  ${item.findings.join(" | ") || item.notes || "budget anomaly"}`));
             return;
+          }
+          case "queue": {
+            const queue = runtime.teamStore.listReviewQueue(resolvedSessionId);
+            printLines(queue.map((entry) => `${entry.kind.padEnd(18)} priority=${entry.priority} status=${entry.status} id=${entry.id}  ${entry.summary} -> ${entry.actionHint}`));
+            return;
+          }
+          case "incidents": {
+            const incidents = runtime.teamStore.listIncidents(resolvedSessionId, target);
+            printLines(incidents.map((incident) => `${incident.severity.padEnd(8)} ${incident.type.padEnd(20)} status=${incident.status} run=${incident.runId} proposal=${incident.proposalId ?? "n/a"} experiment=${incident.experimentId ?? "n/a"}  ${incident.summary}`));
+            return;
+          }
+          case "evals": {
+            const { OPERATOR_SUPERVISED_EVAL_FIXTURES } = await import("../research/evals/operator-supervised-fixtures.js");
+            printLines(
+              OPERATOR_SUPERVISED_EVAL_FIXTURES.map((fixture) =>
+                `${fixture.category.padEnd(22)} ${fixture.id}  signals=${fixture.expectedSignals.join(",")}  failure=${fixture.failureMode}`,
+              ),
+            );
+            return;
+          }
+          case "checklist": {
+            const { buildEnvironmentAwareScenarios, buildSupervisedProductionChecklist, createSoakArtifact, loadSoakArtifact } = await import("../research/soak-harness.js");
+            const { loadMachines } = await import("../remote/config.js");
+            const machines = ["local", ...loadMachines().map((machine) => machine.id)];
+            const artifact = loadSoakArtifact() ?? createSoakArtifact(machines, buildEnvironmentAwareScenarios(machines.filter((machine) => machine !== "local")));
+            const checklist = buildSupervisedProductionChecklist(artifact.results);
+            printLines(checklist.split("\n"));
+            return;
+          }
+          case "soak": {
+            const { buildEnvironmentAwareScenarios, buildSupervisedProductionChecklist, createSoakArtifact, getSoakArtifactPath, saveSoakArtifact } = await import("../research/soak-harness.js");
+            const { loadMachines } = await import("../remote/config.js");
+            let localSmokePassed = false;
+            try {
+              const smoke = await runtime.executor.exec(
+                "local",
+                process.platform === "win32" ? "echo athena_soak_ok" : "printf athena_soak_ok",
+                5000,
+                {
+                  actorRole: "operator",
+                  actorId,
+                  sessionId: resolvedSessionId,
+                  toolName: "research_soak",
+                  toolFamily: "research-orchestration",
+                },
+              );
+              localSmokePassed = smoke.exitCode === 0 && /athena_soak_ok/i.test(smoke.stdout);
+            } catch {
+              localSmokePassed = false;
+            }
+            const remoteMachineIds = loadMachines().map((machine) => machine.id);
+            const artifact = createSoakArtifact(
+              ["local", ...remoteMachineIds],
+              buildEnvironmentAwareScenarios(remoteMachineIds, { localSmokePassed }),
+            );
+            const artifactPath = getSoakArtifactPath();
+            saveSoakArtifact(artifact, artifactPath);
+            printLines([
+              `artifact  ${artifactPath}`,
+              `generated_at  ${new Date(artifact.generatedAt).toISOString()}`,
+              `machines  ${artifact.machineIds.join(",")}`,
+              ...buildSupervisedProductionChecklist(artifact.results).split("\n"),
+            ]);
+            return;
+          }
+          case "journal": {
+            if (!target) {
+              console.error("Usage: athena research journal <run-id>");
+              process.exit(1);
+            }
+            const actions = runtime.teamStore.listActionJournal(resolvedSessionId, target);
+            if (!runtime.teamStore.getTeamRunForSession(resolvedSessionId, target) && actions.length === 0) {
+              console.error(`Run not found in current session: ${target}`);
+              process.exit(1);
+            }
+            const lease = runtime.teamStore.listActiveRunLeases(resolvedSessionId).find((item) => item.runId === target);
+            printLines([
+              `lease  owner=${lease?.ownerId ?? "n/a"} status=${lease?.status ?? "n/a"} expires_at=${lease?.expiresAt ?? "n/a"}`,
+              ...actions.map((item) => `${item.state.padEnd(14)} ${item.actionType.padEnd(28)} dedupe=${item.dedupeKey}  ${item.summary}${item.error ? " err=[redacted]" : ""}`),
+            ]);
+            return;
+          }
+          case "operate": {
+            if (!target || !action) {
+              console.error("Usage: athena research operate <target-id> --kind run|proposal|improvement --action <action>");
+              process.exit(1);
+            }
+            const operateKind = kind ?? "run";
+            if (operateKind === "proposal") {
+              runtime.securityManager.assertActionAllowed(action as import("../security/contracts.js").SecurityActionClass, {
+                actorRole: "operator",
+                actorId,
+                sessionId: resolvedSessionId,
+                actionClass: action as import("../security/contracts.js").SecurityActionClass,
+                toolName: "research_operate",
+                toolFamily: "research-orchestration",
+              });
+              const updated = runtime.teamStore.reviewProposalBrief(
+                resolvedSessionId,
+                target,
+                action as import("../research/contracts.js").ProposalReviewAction,
+              );
+              printLines([
+                `${updated.proposalId}  status=${updated.status}`,
+                `summary  ${updated.summary}`,
+              ]);
+              return;
+            }
+            if (operateKind === "improvement") {
+              runtime.securityManager.assertActionAllowed(action as import("../security/contracts.js").SecurityActionClass, {
+                actorRole: "operator",
+                actorId,
+                sessionId: resolvedSessionId,
+                actionClass: action as import("../security/contracts.js").SecurityActionClass,
+                toolName: "research_operate",
+                toolFamily: "research-orchestration",
+              });
+              const updated = runtime.teamStore.reviewImprovementProposal(
+                resolvedSessionId,
+                target,
+                action as import("../research/contracts.js").ImprovementReviewAction,
+              );
+              printLines([
+                `${updated.improvementId}  review=${updated.reviewStatus} status=${updated.status}`,
+                `title  ${updated.title}`,
+              ]);
+              return;
+            }
+            if (!runtime.teamStore.getTeamRunForSession(resolvedSessionId, target)) {
+              console.error(`Run not found in current session: ${target}`);
+              process.exit(1);
+            }
+            runtime.securityManager.assertActionAllowed(action as import("../security/contracts.js").SecurityActionClass, {
+              actorRole: "operator",
+              actorId,
+              sessionId: resolvedSessionId,
+              runId: target,
+              actionClass: action as import("../security/contracts.js").SecurityActionClass,
+              toolName: "research_operate",
+              toolFamily: "research-orchestration",
+            });
+            if (action === "resume") {
+              const updated = runtime.teamStore.resumeAutomation(target, "operator requested resume");
+              if (!updated) {
+                console.error(`Run not found: ${target}`);
+                process.exit(1);
+              }
+              runtime.teamStore.clearAutomationBlock(target);
+              runtime.teamStore.resolveRunIncidents(resolvedSessionId, target);
+              runtime.teamStore.saveActionJournal({
+                actionId: `operator-resume-${Date.now()}`,
+                sessionId: resolvedSessionId,
+                runId: target,
+                actionType: "operator_resume",
+                state: "committed",
+                dedupeKey: `operator_resume:${Date.now()}`,
+                summary: "operator resumed automation",
+                payload: { actorId },
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              });
+              printLines([`${updated.id}  status=${updated.status} workflow=${updated.workflowState}`, "action  resumed automation"]);
+              return;
+            }
+            if (action === "rollback") {
+              const updated = runtime.teamOrchestrator.rollbackRun(target, "operator requested rollback");
+              if (!updated) {
+                console.error(`Run not found or not rollbackable: ${target}`);
+                process.exit(1);
+              }
+              runtime.teamStore.clearAutomationBlock(target);
+              runtime.teamStore.resolveRunIncidents(resolvedSessionId, target);
+              runtime.teamStore.saveActionJournal({
+                actionId: `operator-rollback-${Date.now()}`,
+                sessionId: resolvedSessionId,
+                runId: target,
+                actionType: "operator_rollback",
+                state: "committed",
+                dedupeKey: `operator_rollback:${Date.now()}`,
+                summary: "operator rolled back run",
+                payload: { actorId },
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              });
+              printLines([`${updated.id}  status=${updated.status} workflow=${updated.workflowState}`, "action  rollback applied"]);
+              return;
+            }
+            if (action === "archive") {
+              const updated = runtime.teamStore.transitionWorkflow(target, "archived", "operator archived the run");
+              if (!updated) {
+                console.error(`Run not found: ${target}`);
+                process.exit(1);
+              }
+              runtime.teamStore.clearAutomationBlock(target);
+              runtime.teamStore.resolveRunIncidents(resolvedSessionId, target);
+              printLines([`${updated.id}  status=${updated.status} workflow=${updated.workflowState}`, "action  archived"]);
+              return;
+            }
+            console.error(`Unknown operator action: ${action}`);
+            process.exit(1);
           }
           case "claims": {
             const claimKind = target === "source" ? "source_claim" : "claim";
@@ -307,6 +520,14 @@ export const research = Command.make(
               console.error("Usage: athena research review <target-id> --kind proposal|improvement --action <action>");
               process.exit(1);
             }
+            runtime.securityManager.assertActionAllowed(action as import("../security/contracts.js").SecurityActionClass, {
+              actorRole: "operator",
+              actorId,
+              sessionId: resolvedSessionId,
+              actionClass: action as import("../security/contracts.js").SecurityActionClass,
+              toolName: "research_review",
+              toolFamily: "research-orchestration",
+            });
             if (kind === "proposal") {
               const updated = runtime.teamStore.reviewProposalBrief(
                 resolvedSessionId,
@@ -335,19 +556,9 @@ export const research = Command.make(
             process.exit(1);
           }
           case "next-actions": {
-            const proposals = runtime.teamStore.listProposalBriefs(resolvedSessionId);
-            const revisitDue = runtime.teamStore.listRevisitDueProposals(resolvedSessionId);
-            const openTriggers = runtime.teamStore.listOpenReconsiderationTriggers(resolvedSessionId);
-            const activeRuns = runtime.teamStore.listRecentTeamRuns(resolvedSessionId, 20)
-              .filter((run) => run.status === "active");
+            const queue = runtime.teamStore.listReviewQueue(resolvedSessionId);
             const lines = [
-              ...activeRuns.map((run) => `run  ${run.id} continue workflow=${run.workflowState} stage=${run.currentStage}`),
-              ...revisitDue.map((proposal) => `revisit  ${proposal.proposalId} reassess due evidence changes`),
-              ...openTriggers.slice(0, 5).map((trigger) => `trigger  ${trigger.proposalId} wait for ${trigger.triggerType}`),
-              ...proposals
-                .filter((proposal) => proposal.status === "ready_for_experiment" || proposal.status === "scoped_trial")
-                .slice(0, 5)
-                .map((proposal) => `experiment  ${proposal.proposalId} prepare validation run`),
+              ...queue.slice(0, 8).map((entry) => `${entry.kind}  ${entry.id} ${entry.actionHint}`),
             ];
             printLines(lines.length > 0 ? lines : ["No operator next actions identified."]);
             return;

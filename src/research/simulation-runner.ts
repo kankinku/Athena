@@ -6,6 +6,7 @@ import type { ExperimentBrancher } from "../experiments/branching.js";
 import type { ExperimentCharter, ExperimentResult } from "./contracts.js";
 import type { TeamStore } from "./team-store.js";
 import { buildResultDecision } from "./decision-engine.js";
+import { nanoid } from "nanoid";
 
 export interface SimulationLaunchResult {
   simulationId: string;
@@ -134,6 +135,24 @@ export class SimulationRunner {
       charter.proposalId,
       charter,
     );
+    const sessionId = this.sessionIdProvider();
+    this.teamStore.saveActionJournal({
+      actionId: nanoid(),
+      sessionId,
+      runId: run.id,
+      actionType: "simulation_launch",
+      state: "issued",
+      dedupeKey: `simulation_launch:${run.id}`,
+      summary: `launching simulation ${run.id}`,
+      payload: {
+        proposalId: charter.proposalId,
+        machineId: charter.machineId,
+        command: charter.command,
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      heartbeatAt: Date.now(),
+    });
 
     this.teamStore.saveExperimentLineage(this.sessionIdProvider(), {
       lineageId: `${charter.proposalId}-${run.id}-baseline`,
@@ -165,6 +184,14 @@ export class SimulationRunner {
           metricNames: charter.metricNames,
           metricPatterns: charter.metricPatterns,
         },
+        {
+          actorRole: "agent",
+          machineId: charter.machineId,
+          runId: run.id,
+          toolName: "simulation_start",
+          toolFamily: "research-orchestration",
+          networkAccess: charter.machineId !== "local",
+        },
       );
 
       const taskId = `${proc.machineId}:${proc.pid}`;
@@ -172,6 +199,23 @@ export class SimulationRunner {
         taskKey: taskId,
         logPath: proc.logPath,
         status: "running",
+      });
+      this.teamStore.saveActionJournal({
+        actionId: nanoid(),
+        sessionId,
+        runId: run.id,
+        actionType: "simulation_launch",
+        state: "running",
+        dedupeKey: `simulation_launch:${run.id}`,
+        summary: `simulation ${run.id} is running`,
+        result: {
+          taskId,
+          logPath: proc.logPath,
+          machineId: charter.machineId,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        heartbeatAt: Date.now(),
       });
 
       return {
@@ -182,6 +226,34 @@ export class SimulationRunner {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.teamStore.saveActionJournal({
+        actionId: nanoid(),
+        sessionId,
+        runId: run.id,
+        actionType: "simulation_launch",
+        state: "needs_recovery",
+        dedupeKey: `simulation_launch:${run.id}`,
+        summary: `simulation ${run.id} failed to launch`,
+        error: message,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        heartbeatAt: Date.now(),
+      });
+      this.teamStore.saveIncident({
+        incidentId: `incident-simulation-launch-${run.id}`,
+        sessionId,
+        runId: run.id,
+        proposalId: charter.proposalId,
+        experimentId: run.id,
+        type: "simulation_crash",
+        severity: "critical",
+        summary: "Simulation launch failed",
+        details: message,
+        status: "open",
+        actionRequired: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
       const result: ExperimentResult = {
         experimentId: run.id,
         proposalId: charter.proposalId,
@@ -214,10 +286,45 @@ export class SimulationRunner {
   }
 
   finalize(simulationId: string, result: ExperimentResult): ExperimentResult {
+    const simulation = this.teamStore.getSimulationRun(simulationId);
     this.teamStore.updateSimulationRun(simulationId, {
       status: result.outcomeStatus,
       result,
     });
+    if (simulation) {
+      this.teamStore.saveActionJournal({
+        actionId: nanoid(),
+        sessionId: simulation.sessionId,
+        runId: simulationId,
+        actionType: "simulation_finalize",
+        state: "committed",
+        dedupeKey: `simulation_finalize:${simulationId}`,
+        summary: `simulation ${simulationId} finalized`,
+        result: {
+          proposalId: result.proposalId,
+          outcomeStatus: result.outcomeStatus,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      if (result.outcomeStatus === "crash" || result.outcomeStatus === "budget_exceeded") {
+        this.teamStore.saveIncident({
+          incidentId: `incident-finalize-${simulationId}-${result.outcomeStatus}`,
+          sessionId: simulation.sessionId,
+          runId: simulationId,
+          proposalId: result.proposalId,
+          experimentId: simulationId,
+          type: result.outcomeStatus === "budget_exceeded" ? "budget_exceeded" : "simulation_crash",
+          severity: result.outcomeStatus === "budget_exceeded" ? "warning" : "critical",
+          summary: `Simulation finalized with ${result.outcomeStatus}`,
+          details: result.notes,
+          status: "open",
+          actionRequired: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+    }
     return result;
   }
 
@@ -249,7 +356,20 @@ export class SimulationRunner {
         if (!Number.isNaN(pid)) {
           const running = await this.executor.isRunning(machineId, pid).catch(() => false);
           if (running) {
-            await this.connectionPool.exec(machineId, `kill -TERM ${pid}`);
+            await this.connectionPool.exec(
+              machineId,
+              `kill -TERM ${pid}`,
+              undefined,
+              {
+                actorRole: "system",
+                machineId,
+                runId: run.id,
+                toolName: "budget_enforcer",
+                toolFamily: "research-orchestration",
+                networkAccess: machineId !== "local",
+                destructive: true,
+              },
+            );
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
           await this.metricCollector.collectAll().catch(() => {});
@@ -276,6 +396,36 @@ export class SimulationRunner {
       this.teamStore.updateSimulationRun(run.id, {
         status: "budget_exceeded",
         result,
+      });
+      this.teamStore.saveActionJournal({
+        actionId: nanoid(),
+        sessionId,
+        runId: run.id,
+        actionType: "simulation_budget_enforcement",
+        state: "committed",
+        dedupeKey: `simulation_budget_enforcement:${run.id}`,
+        summary: `budget enforcement completed for ${run.id}`,
+        result: {
+          proposalId: run.proposalId,
+          reasons,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      this.teamStore.saveIncident({
+        incidentId: `incident-budget-${run.id}`,
+        sessionId,
+        runId: run.id,
+        proposalId: run.proposalId,
+        experimentId: run.id,
+        type: "budget_exceeded",
+        severity: "warning",
+        summary: "Simulation budget exceeded",
+        details: reasons.join("; "),
+        status: "open",
+        actionRequired: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
       });
       const proposal = this.teamStore.listProposalBriefs(sessionId).find((item) => item.proposalId === run.proposalId);
       const latestDecision = this.teamStore.getLatestDecisionRecord(sessionId, run.proposalId);

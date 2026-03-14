@@ -14,19 +14,25 @@ This roadmap is intentionally narrower than the fully autonomous roadmap:
 
 Working estimate as of `2026-03-14`:
 
-- operator-supervised production readiness: `70-80%`
-- fully autonomous production readiness: `50-60%`
+- operator-supervised feature completeness: `93-97%`
+- operator-supervised production evidence: `not yet green`
+- fully autonomous production readiness: `65-72%`
 
 Reason:
 
-- Athena already has structured research state, automation gates, recovery hooks, CLI/TUI/report surfaces, and regression coverage
-- the biggest remaining gaps are not feature breadth, but production qualities:
-  - permissions
-  - durable execution
-  - evidence fidelity
-  - operator incident handling
-  - observability/evals
-  - soak validation
+- Athena now has formal capability policy, actor/RBAC bindings, audited operator actions, durable action journaling, review surfaces, eval fixtures, and supervised checklist generation
+- the remaining gap is concentrated in proof, not core feature shape:
+  - long-duration soak evidence
+  - real multi-host supervised runs
+  - measured SLOs for recovery, rollback, and response
+
+### Current checkpoint
+
+As of `2026-03-14`, the roadmap is in a `feature-complete but evidence-incomplete` state for operator-supervised production:
+
+- Steps `10-12` are implemented in code with regression coverage
+- Step `9` is implemented at the model/enforcement level, including actor/RBAC-backed auditability
+- Steps `13-14` have fixtures, harnesses, and operator surfaces, but the supervised-production checklist is still red until real soak evidence is collected
 
 ## Evidence Base
 
@@ -43,28 +49,34 @@ Reason:
 3. The current release boundary explicitly excludes robust ingestion, richer evidence attribution, and scheduler-grade overnight orchestration.
    - `docs/release-readiness-v0.3.md`
 
-4. A minimal security floor exists, but it is regex-based rather than capability-based.
+4. Athena now has a first-class security model, but the production exit gate still depends on soak evidence rather than model shape alone.
    - `src/security/policy.ts`
+   - `src/security/contracts.ts`
+   - `src/security/audit-store.ts`
    - evidence:
-     - command allow/review/block patterns
-     - protected path allowlists
-     - no first-class role/capability/audit decision model yet
+     - capability-scoped machine/workspace/path/tool/network/destructive controls
+     - actor/RBAC tier rules and action-class gating
+     - persisted security decisions with actor/tier/action audit fields
 
-5. Recovery and retry scaffolding already exist, but the control loop is still mostly run-centric rather than action-journal-centric.
+5. Durable recovery is now action-journal-backed, but long-duration proof still needs soak evidence.
    - `src/research/automation-manager.ts`
+   - `src/research/action-journal-store.ts`
+   - `src/research/run-lease-store.ts`
    - evidence:
-     - `tickSession()`
-     - `recoverSession()`
-     - `maybeRetryRun()`
+     - persisted action lifecycle state
+     - run lease and heartbeat semantics
+     - replay-safe recovery and restart tests
 
-6. Athena already has the data model for evidence attribution, but not yet the stronger ingestion engine needed for production decisions.
+6. Athena now has stronger ingestion and attribution plumbing, but final production trust still depends on sustained exercise under soak.
    - `src/research/contracts.ts`
    - `src/research/ingestion-service.ts`
+   - `src/research/source-adapters/`
+   - `src/research/reporting.ts`
    - evidence:
      - `CitationSpan`
      - `SourceAttribution`
-     - canonical claim structures
-     - heuristic extraction path in ingestion service
+     - contradiction tracking and evidence health surfaces
+     - repeated-ingest attribution and proposal-scoped evidence summaries
 
 7. The first autonomous-policy slice is now implemented, including stage timeout enforcement and autonomy policy persistence.
    - `src/research/contracts.ts`

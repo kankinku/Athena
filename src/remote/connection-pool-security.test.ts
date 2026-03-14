@@ -19,3 +19,12 @@ test("ConnectionPool still runs safe local commands under security floor", async
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /secure-ok/);
 });
+
+test("ConnectionPool rejects protected tail reads before execution", async () => {
+  const pool = new ConnectionPool(new SecurityManager({ mode: "enforce" }));
+
+  await assert.rejects(
+    pool.tailFile("local", "/home/test/.ssh/id_rsa", 20),
+    /requires approval/i,
+  );
+});

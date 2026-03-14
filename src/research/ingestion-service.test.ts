@@ -13,6 +13,7 @@ import { GraphMemory } from "../memory/graph-memory.js";
 import { IngestionService } from "./ingestion-service.js";
 import { SessionStore } from "../store/session-store.js";
 import { closeDb } from "../store/database.js";
+import { SecurityManager } from "../security/policy.js";
 
 test("ingestion service extracts claims from text, document, and url inputs", async () => {
   const home = mkdtempSync(join(tmpdir(), "athena-ingestion-service-"));
@@ -64,6 +65,22 @@ test("ingestion service extracts claims from text, document, and url inputs", as
       sessionId: session.id,
       problemArea: "runtime optimization",
     });
+    writeFileSync(join(home, "repo-note.ts"), "export const note = 'Measured telemetry improved throughput by 9%, but rollback safety stayed weak.';\n", "utf8");
+    writeFileSync(join(home, "repo-metrics.md"), "Benchmarks showed memory usage fell by 22% after checkpointing.\n", "utf8");
+    const repoResult = await service.ingest({
+      inputType: "repo",
+      value: home,
+      sessionId: session.id,
+      problemArea: "runtime optimization",
+      title: "repo snapshot",
+    });
+    const repeatedTextResult = await service.ingest({
+      inputType: "text",
+      value: "Benchmark data shows memory usage dropped by 18% after checkpointing. However, the same trial was not reproducible on the smallest GPU.",
+      sessionId: session.id,
+      problemArea: "training stability",
+      title: "Inline note duplicate",
+    });
 
     assert.ok(textResult.pack.claims.length > 0);
     assert.ok(textResult.pack.claims.some((claim) => claim.citationSpans?.length));
@@ -72,13 +89,64 @@ test("ingestion service extracts claims from text, document, and url inputs", as
     assert.ok(docResult.pack.claims.length > 0);
     assert.match(urlResult.source.title, /Latency Note/);
     assert.ok(urlResult.pack.canonicalClaims && urlResult.pack.canonicalClaims.length > 0);
+    assert.equal(repoResult.source.sourceType, "repo");
+    assert.ok((repoResult.source.evidenceHealth?.coverageGaps.length ?? 0) >= 0);
+    assert.equal(repeatedTextResult.source.sourceId, textResult.source.sourceId);
 
     const sources = teamStore.listIngestionSources(session.id);
-    assert.equal(sources.length, 3);
+    assert.equal(sources.length, 4);
     assert.ok(sources.every((source) => source.extractedClaims && source.extractedClaims.length > 0));
     assert.ok(sources.some((source) => source.canonicalClaims?.some((claim) => (claim.sourceAttributions?.length ?? 0) > 0)));
+    assert.ok(sources.some((source) => source.evidenceHealth?.modelConfidence !== undefined));
   } finally {
     server.close();
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("ingestion service enforces security policy and preserves distinct citation spans", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-ingestion-security-"));
+  process.env.ATHENA_HOME = home;
+
+  try {
+    const sessionStore = new SessionStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+    const teamStore = new TeamStore();
+    const memoryStore = new MemoryStore(session.id);
+    const graphMemory = new GraphMemory(memoryStore);
+    const orchestrator = new TeamOrchestrator(teamStore, graphMemory, () => session.id);
+    const securityManager = new SecurityManager({
+      mode: "enforce",
+      capabilityPolicy: {
+        allowNetworkAccess: false,
+        allowedReadPathRoots: [home],
+      },
+    });
+    const service = new IngestionService(teamStore, orchestrator, securityManager);
+
+    await assert.rejects(
+      service.ingest({
+        inputType: "url",
+        value: "https://example.com",
+        sessionId: session.id,
+        problemArea: "runtime optimization",
+      }),
+      /network or remote access/i,
+    );
+
+    const repeated = "Measured telemetry improved latency by 12% after batching writes. Measured telemetry improved latency by 12% after batching writes.";
+    const result = await service.ingest({
+      inputType: "text",
+      value: repeated,
+      sessionId: session.id,
+      problemArea: "runtime optimization",
+    });
+    const citations = result.pack.claims.flatMap((claim) => claim.citationSpans ?? []);
+    assert.ok(citations.length >= 2);
+    assert.notEqual(citations[0]?.start, citations[1]?.start);
+  } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });
     delete process.env.ATHENA_HOME;

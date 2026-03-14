@@ -29,12 +29,21 @@ export function createRemoteExecTool(
       required: ["machine_id", "command"],
     },
     execute: async (args) => {
+      const machineId = args.machine_id as string;
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId,
+        toolName: "remote_exec",
+        toolFamily: "shell" as const,
+        networkAccess: machineId !== "local",
+      };
       const result = await executor.exec(
-        args.machine_id as string,
+        machineId,
         args.command as string,
         args.timeout_seconds
           ? (args.timeout_seconds as number) * 1000
           : undefined,
+        securityContext,
       );
       return JSON.stringify({
         stdout: result.stdout,
@@ -84,14 +93,23 @@ export function createRemoteExecBackgroundTool(
       required: ["machine_id", "command"],
     },
     execute: async (args) => {
+      const machineId = args.machine_id as string;
+      const securityContext = {
+        actorRole: "agent" as const,
+        machineId,
+        toolName: "remote_exec_background",
+        toolFamily: "shell" as const,
+        networkAccess: machineId !== "local",
+      };
       const metricNames = args.metric_names as string[] | undefined;
       const metricPatterns = args.metric_patterns as Record<string, string> | undefined;
 
       const proc = await executor.execBackground(
-        args.machine_id as string,
+        machineId,
         args.command as string,
         args.log_path as string | undefined,
         { metricNames, metricPatterns },
+        securityContext,
       );
 
       // Register collector source immediately so metrics are tracked from the start

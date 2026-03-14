@@ -2,13 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { RemoteExecutor } from "./executor.js";
 import type { ExecResult } from "./types.js";
+import type { SecurityExecutionContext } from "../security/policy.js";
 
 interface PoolLike {
-  exec: (machineId: string, command: string, timeoutMs?: number) => Promise<ExecResult>;
-  execBackground: (machineId: string, command: string, logPath?: string) => Promise<{ pid: number; logPath: string }>;
+  exec: (machineId: string, command: string, timeoutMs?: number, securityContext?: SecurityExecutionContext) => Promise<ExecResult>;
+  execBackground: (machineId: string, command: string, logPath?: string, securityContext?: SecurityExecutionContext) => Promise<{ pid: number; logPath: string }>;
   isProcessRunning: (machineId: string, pid: number) => Promise<boolean>;
-  tailFile: (machineId: string, path: string, lines?: number) => Promise<string>;
-  readBackgroundExitCode: (machineId: string, logPath: string) => Promise<number | null>;
+  tailFile: (machineId: string, path: string, lines?: number, securityContext?: SecurityExecutionContext) => Promise<string>;
+  readBackgroundExitCode: (machineId: string, logPath: string, securityContext?: SecurityExecutionContext) => Promise<number | null>;
 }
 
 function createPool(overrides: Partial<PoolLike> = {}): PoolLike {

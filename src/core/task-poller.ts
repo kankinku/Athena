@@ -32,6 +32,18 @@ export interface TaskPollerDeps {
   notifier: Notifier | null;
 }
 
+export interface TaskActivityPollResult extends TaskPollResult {
+  didCollectMetrics: boolean;
+}
+
+export interface PromptBridgeDeps {
+  executor: RemoteExecutor;
+  metricStore: MetricStore;
+  isBusy: () => boolean;
+  onPrompt: (message: string) => void;
+  onSystemMessage?: (message: string) => void;
+}
+
 /**
  * Check all background processes and return their statuses.
  */
@@ -113,6 +125,43 @@ export async function handleFinishedTasks(
 }
 
 /**
+ * Shared background task polling flow used by both UI and ACP loops.
+ * It keeps task completion handling and final metric collection in one place.
+ */
+export async function pollRuntimeTaskActivity(
+  deps: TaskPollerDeps,
+): Promise<TaskActivityPollResult> {
+  const { executor, metricCollector } = deps;
+  const procs = executor.getBackgroundProcesses();
+
+  if (procs.length === 0) {
+    await metricCollector.collectAll().catch(() => {});
+    return {
+      statuses: [],
+      finished: [],
+      didCollectMetrics: true,
+    };
+  }
+
+  const { statuses, finished } = await pollTaskStatuses(executor);
+  if (finished.length > 0) {
+    await handleFinishedTasks(finished, deps);
+    return {
+      statuses,
+      finished,
+      didCollectMetrics: true,
+    };
+  }
+
+  await metricCollector.collectAll().catch(() => {});
+  return {
+    statuses,
+    finished,
+    didCollectMetrics: true,
+  };
+}
+
+/**
  * Build the monitor tick status message from live task/metric state.
  */
 export function buildMonitorMessage(
@@ -146,4 +195,24 @@ export function buildMonitorMessage(
   }
 
   return parts.join("\n");
+}
+
+export function createMonitorTickHandler(
+  config: PromptBridgeDeps,
+): (monitor: MonitorConfig) => void {
+  return (monitor) => {
+    if (config.isBusy()) return;
+    const message = buildMonitorMessage(monitor, config.executor, config.metricStore);
+    config.onPrompt(message);
+  };
+}
+
+export function createWakePromptHandler(
+  config: PromptBridgeDeps,
+): (_session: unknown, _reason: string, wakeMessage: string) => void {
+  return (_session, _reason, wakeMessage) => {
+    if (config.isBusy()) return;
+    config.onSystemMessage?.("Agent waking up ??trigger fired");
+    config.onPrompt(wakeMessage);
+  };
 }

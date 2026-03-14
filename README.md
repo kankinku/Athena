@@ -13,7 +13,7 @@ You can leave it to work overnight and don't have to worry about it exiting the 
 
 ## Current Status
 
-Athena is currently in a `v0.3` short-term closure state as a:
+Athena is currently in a `v0.3` release-hardening state as a:
 
 `stable operator-supervised research system`
 
@@ -21,7 +21,17 @@ Today, that means the repo already includes:
 
 - structured research state with canonical claims, proposal scoring, workflow history, automation policy, and self-improvement records
 - operator-facing control surfaces for inspection, approval, review, and reporting
-- safety rails for persistence, migrations, automation gates, CLI/report regressions, and simulation launch failures
+- safety rails for persistence, migrations, automation gates, CLI/report regressions, simulation launch failures, and automation recovery
+- cross-platform local execution support, Windows shell/temp-path handling, and remote sync fallback to `scp` when `rsync` is unavailable on Windows
+- release-hardening coverage for auth, provider helpers, remote execution, ACP tools, TUI panels, Windows regressions, and end-to-end research flows
+
+In practical terms, Athena should be read as:
+
+- strong beta / limited release software for operator-supervised research work
+- suitable for local use and small-team technical evaluation
+- not yet a fully hardened production system for unrestricted deployment
+
+The biggest current limitation is still the missing permissions/security model. The second largest is that remote-machine validation is strong at the orchestration-path level, but not yet equivalent to broad real-world multi-host production soak testing.
 
 If you want the exact release boundary for this milestone, see:
 
@@ -45,6 +55,120 @@ Requires Node.js 20+.
 - Claude CLI usage is ban-free; conforms to Anthropic's usage policy
 
 **OpenAI** — OAuth login on first run (requires ChatGPT Plus or Pro).
+
+Check auth status at any time:
+
+```bash
+athena auth status
+```
+
+## Security Floor
+
+Athena now includes a minimal security floor for command execution and sensitive path access.
+
+- dangerous shell commands are blocked by default
+- high-risk commands (for example raw `ssh` / `rsync` / `scp`) can be forced through policy review
+- sensitive paths such as `~/.ssh`, cloud credential directories, Athena auth storage, and system paths are protected
+- path reads can require approval and protected-path writes are blocked by default in enforce mode
+
+Check the active security policy:
+
+```bash
+athena security
+```
+
+Tune policy in `athena.json`:
+
+```json
+{
+  "security": {
+    "mode": "enforce",
+    "commandPolicy": {
+      "allowPatterns": ["^git status$"]
+    },
+    "pathPolicy": {
+      "allowWritePaths": ["^/workspace/project/tmp/"]
+    }
+  }
+}
+```
+
+Use `"mode": "audit"` while calibrating rules if you want Athena to log policy hits without enforcing them.
+
+## Quickstart
+
+New users should be able to get one real run through the system with only the README.
+
+```bash
+# 1) authenticate once
+athena auth login --provider claude
+# or
+athena auth login --provider openai
+
+# 2) start Athena with a real research goal
+athena "Benchmark the current training loop and propose the first safe improvement"
+
+# 3) inspect the structured research state that Athena created from that first prompt
+athena research runs
+athena research workflow <run-id>
+
+# 4) generate an operator-facing report from the session
+athena report
+```
+
+After the first prompt, Athena now creates a baseline research run automatically so `athena research ...` views and `athena report` have structured state to inspect.
+
+## What Is Verified
+
+The current milestone has explicit verification for:
+
+- auth credential storage/refresh behavior
+- provider helper logic such as SSE parsing and retry classification
+- local and remote execution paths, including background exit-code handling
+- Windows-specific shell, null device, temp-path, and sync fallback behavior
+- ACP research orchestration tool wiring
+- TUI research status panel rendering
+- end-to-end research flow coverage for a local-only run and a remote-machine orchestration path
+- optional live SSH validation against a real remote host when remote test environment variables are provided
+
+Development verification commands:
+
+```bash
+npm run test:research
+npm run test:phase5
+npm run test:phase7
+npm run test:release
+npm run build
+```
+
+`test:release` runs the research suite plus the release-hardening suite together.
+
+## CI
+
+Athena now includes GitHub Actions workflows for cross-platform validation:
+
+- `.github/workflows/ci.yml` runs build + research + Phase 5 + Phase 6 + Phase 7 on Linux, macOS, and Windows
+- `.github/workflows/remote-live.yml` is a manual workflow for real SSH-host validation
+
+To enable the live remote workflow in GitHub Actions, set these repository secrets:
+
+- `ATHENA_TEST_SSH_HOST`
+- `ATHENA_TEST_SSH_USER`
+- optional: `ATHENA_TEST_SSH_KEY`, `ATHENA_TEST_SSH_PORT`, `ATHENA_TEST_SSH_MACHINE_ID`
+
+For a live remote SSH validation run:
+
+```bash
+ATHENA_TEST_SSH_HOST=10.0.0.5 \
+ATHENA_TEST_SSH_USER=researcher \
+ATHENA_TEST_SSH_KEY=~/.ssh/id_rsa \
+npm run test:remote-live
+```
+
+Optional variables:
+
+- `ATHENA_TEST_SSH_PORT`
+- `ATHENA_TEST_SSH_MACHINE_ID`
 
 ## Usage
 
@@ -88,6 +212,7 @@ It will write training scripts, launch runs, parse metrics from stdout, set up m
 | `/memory [path]` | Browse the agent's memory tree |
 | `athena research <view> [target]` | Inspect structured research state from the CLI |
 | `athena report [session-id]` | Generate an operator-facing research report |
+| `athena security` | Show active security policy mode and rule counts |
 | `/status` | Provider, model, cost, state |
 | `/clear` | Clear conversation |
 | `/help` | Show all commands |
@@ -278,6 +403,37 @@ Machines are stored in `~/.athena/machines.json` and auto-connect on startup.
 
 The agent prefers remote machines for heavy compute and uses `local` for lightweight tasks. Or if you don't have a remote machine.
 
+### SSH and Sync Notes
+
+- Athena expects `ssh` for remote execution on every platform.
+- Athena prefers `rsync` for remote file sync.
+- On Windows, Athena falls back to `scp` when `rsync` is not installed but the OpenSSH client is available.
+- If neither `rsync` nor `scp` is available, remote sync will stay unavailable until you install one of them.
+- The remote-machine E2E coverage in this repo validates the remote orchestration path, task tracking, and automation finalization logic. It is not the same thing as a full live multi-host infrastructure soak test.
+- `npm run test:remote-live` upgrades that coverage to a real SSH host when credentials are available.
+
+Recommended checks:
+
+```bash
+athena doctor
+ssh -V
+rsync --version
+scp -V
+```
+
+## Recommended OS
+
+- `Linux` or `macOS`: recommended for the smoothest local + remote research workflow.
+- `Windows`: supported for local execution, background execution, doctor, and remote sync with `scp` fallback.
+- For remote-heavy research setups, use a Linux/macOS host or a Windows machine with OpenSSH and `rsync` installed.
+
+## Known Limits
+
+- Athena does not yet have a permissions or sandboxing model.
+- Remote execution is functional, but broad production-style validation across many real SSH targets is still pending.
+- Operator supervision is still the intended mode for proposal approval, experiment review, and risky environment changes.
+- If you care about reproducibility or data safety, run Athena in an isolated environment and keep backups.
+
 ## How It Works
 
 Athena runs an autonomous loop:
@@ -385,11 +541,15 @@ Everything is stored locally in `~/.athena/`:
 git clone https://github.com/snoglobe/athena.git
 cd athena
 npm install
-npm run dev          # tsx src/index.tsx
+npm run dev          # tsx src/bootstrap.ts
 npm run test:research
+npm run test:phase5
+npm run test:phase7
+npm run test:remote-live  # requires ATHENA_TEST_SSH_* env vars
+npm run test:release
 npm run smoke:research
 npm run build        # tsc
-npm start            # node dist/index.js
+npm start            # node dist/bootstrap.js
 ```
 
 ## License

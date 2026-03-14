@@ -1,7 +1,8 @@
 import type { ToolDefinition } from "../providers/types.js";
 import type { FileSync } from "../remote/file-sync.js";
+import type { SecurityManager } from "../security/policy.js";
 
-export function createUploadTool(fileSync: FileSync): ToolDefinition {
+export function createUploadTool(fileSync: FileSync, securityManager?: SecurityManager): ToolDefinition {
   return {
     name: "remote_upload",
     description: "Upload files from local machine to a remote machine via rsync.",
@@ -24,6 +25,8 @@ export function createUploadTool(fileSync: FileSync): ToolDefinition {
       required: ["machine_id", "local_path", "remote_path"],
     },
     execute: async (args) => {
+      securityManager?.assertPathAllowed(args.local_path as string, "read");
+      securityManager?.assertPathAllowed(args.remote_path as string, "write");
       await fileSync.upload(
         args.machine_id as string,
         args.local_path as string,
@@ -36,6 +39,7 @@ export function createUploadTool(fileSync: FileSync): ToolDefinition {
 
 export function createDownloadTool(
   fileSync: FileSync,
+  securityManager?: SecurityManager,
 ): ToolDefinition {
   return {
     name: "remote_download",
@@ -60,6 +64,8 @@ export function createDownloadTool(
       required: ["machine_id", "remote_path", "local_path"],
     },
     execute: async (args) => {
+      securityManager?.assertPathAllowed(args.remote_path as string, "read");
+      securityManager?.assertPathAllowed(args.local_path as string, "write");
       await fileSync.download(
         args.machine_id as string,
         args.remote_path as string,

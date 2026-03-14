@@ -31,11 +31,14 @@ import type {
 } from "./types.js";
 import type { AthenaRuntime } from "../init.js";
 import type { ToolCallEvent } from "../providers/types.js";
-import type { MonitorConfig } from "../core/monitor.js";
 import type { Message } from "../ui/types.js";
 import { VERSION } from "../version.js";
 import { COMMANDS, handleSlashCommand, type CommandContext } from "../ui/commands.js";
-import { pollTaskStatuses, handleFinishedTasks, buildMonitorMessage } from "../core/task-poller.js";
+import {
+  createMonitorTickHandler,
+  createWakePromptHandler,
+  pollRuntimeTaskActivity,
+} from "../core/task-poller.js";
 
 /** Map athena tool names to ACP tool call kinds. */
 function toolKind(name: string): ToolCallKind {
@@ -111,24 +114,31 @@ export class AcpServer {
   // ── Monitor & sleep/wake wiring ────────────────────
 
   private wireMonitor(): void {
-    this.runtime.monitorManager.on("tick", (config: MonitorConfig) => {
-      if (this.prompting) return;
-
-      const sessionId = this.getActiveSessionId();
-      if (!sessionId) return;
-
-      const message = buildMonitorMessage(config, this.runtime.executor, this.runtime.metricStore);
-      this.injectPrompt(sessionId, message);
+    const onTick = createMonitorTickHandler({
+      executor: this.runtime.executor,
+      metricStore: this.runtime.metricStore,
+      isBusy: () => this.prompting,
+      onPrompt: (message) => {
+        const sessionId = this.getActiveSessionId();
+        if (!sessionId) return;
+        void this.injectPrompt(sessionId, message);
+      },
     });
+    this.runtime.monitorManager.on("tick", onTick);
   }
 
   private wireSleepWake(): void {
-    this.runtime.sleepManager.on("wake", (_session: unknown, _reason: string, wakeMessage: string) => {
-      if (this.prompting) return;
-      const sessionId = this.getActiveSessionId();
-      if (!sessionId) return;
-      this.injectPrompt(sessionId, wakeMessage);
+    const onWake = createWakePromptHandler({
+      executor: this.runtime.executor,
+      metricStore: this.runtime.metricStore,
+      isBusy: () => this.prompting,
+      onPrompt: (message) => {
+        const sessionId = this.getActiveSessionId();
+        if (!sessionId) return;
+        void this.injectPrompt(sessionId, message);
+      },
     });
+    this.runtime.sleepManager.on("wake", onWake);
   }
 
   /**
@@ -137,30 +147,18 @@ export class AcpServer {
    * Uses setTimeout + re-arm to prevent overlapping polls under high latency.
    */
   private startTaskPoll(): void {
-    const { executor, metricCollector } = this.runtime;
+    const { executor } = this.runtime;
 
     const poll = async () => {
       try {
-        const procs = executor.getBackgroundProcesses();
-        if (procs.length === 0) {
-          await metricCollector.collectAll().catch(() => {});
-          return;
-        }
-
-        const { finished } = await pollTaskStatuses(executor);
-
-        if (finished.length > 0) {
-          await handleFinishedTasks(finished, {
-            executor: this.runtime.executor,
-            connectionPool: this.runtime.connectionPool,
-            metricCollector: this.runtime.metricCollector,
-            metricStore: this.runtime.metricStore,
-            experimentTracker: this.runtime.experimentTracker,
-            notifier: this.runtime.notifier,
-          });
-        } else {
-          await metricCollector.collectAll().catch(() => {});
-        }
+        await pollRuntimeTaskActivity({
+          executor: this.runtime.executor,
+          connectionPool: this.runtime.connectionPool,
+          metricCollector: this.runtime.metricCollector,
+          metricStore: this.runtime.metricStore,
+          experimentTracker: this.runtime.experimentTracker,
+          notifier: this.runtime.notifier,
+        });
 
         await this.runtime.simulationRunner.enforceBudgets().catch(() => {});
       } catch {

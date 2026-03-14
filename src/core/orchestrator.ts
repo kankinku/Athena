@@ -21,6 +21,13 @@ export interface OrchestratorConfig {
   sessionStore?: SessionStore;
 }
 
+export interface BeforeSendContext {
+  session: Session;
+  message: string;
+  provider: ModelProvider;
+  attachments?: Attachment[];
+}
+
 export class Orchestrator {
   private providers = new Map<string, ModelProvider>();
   private activeProvider: ModelProvider | null = null;
@@ -30,6 +37,7 @@ export class Orchestrator {
   private _lastInputTokens = 0;
   private _contextGate: ContextGate | null = null;
   private _stickyManager: StickyManager | null = null;
+  private _beforeSendHook: ((context: BeforeSendContext) => Promise<void> | void) | null = null;
   readonly stateMachine = new AgentStateMachine();
   readonly sessionStore: SessionStore;
   readonly config: OrchestratorConfig;
@@ -61,6 +69,10 @@ export class Orchestrator {
 
   setStickyManager(manager: StickyManager): void {
     this._stickyManager = manager;
+  }
+
+  setBeforeSendHook(hook: (context: BeforeSendContext) => Promise<void> | void): void {
+    this._beforeSendHook = hook;
   }
 
   getTools(): ToolDefinition[] {
@@ -146,6 +158,20 @@ export class Orchestrator {
     }
 
     const session = await this.ensureSession();
+    if (this._beforeSendHook) {
+      try {
+        await this._beforeSendHook({
+          session,
+          message,
+          provider: this.activeProvider!,
+          attachments,
+        });
+      } catch (err) {
+        process.stderr.write(
+          `[athena] Failed to prepare research context: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
     this.sessionStore.updateLastActive(session.id);
     this.sessionStore.addMessage(session.id, "user", message);
 

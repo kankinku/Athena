@@ -7,7 +7,7 @@ import { Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
 const view = Args.text({ name: "view" }).pipe(
-  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|graph|revisit|scorecard|budget|claims|improvements|review|next-actions"),
+  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|next-actions"),
 );
 
 const target = Args.text({ name: "target" }).pipe(
@@ -40,25 +40,58 @@ const action = Options.text("action").pipe(
   Options.optional,
 );
 
+const inputType = Options.text("type").pipe(
+  Options.withDescription("For ingest: url|document|text"),
+  Options.optional,
+);
+
+const problemArea = Options.text("problem-area").pipe(
+  Options.withDescription("For ingest: research problem area used for claim grouping"),
+  Options.optional,
+);
+
+const title = Options.text("title").pipe(
+  Options.withDescription("For ingest: optional source title override"),
+  Options.optional,
+);
+
+const runId = Options.text("run").pipe(
+  Options.withDescription("For ingest: optional run id to attach the ingestion result to"),
+  Options.optional,
+);
+
 export const research = Command.make(
   "research",
-  { view, target, state, tag, recent, kind, action },
-  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent, kind: kindOpt, action: actionOpt }) =>
+  { view, target, state, tag, recent, kind, action, inputType, problemArea, title, runId },
+  ({ view, target: targetOpt, state: stateOpt, tag: tagOpt, recent, kind: kindOpt, action: actionOpt, inputType: inputTypeOpt, problemArea: problemAreaOpt, title: titleOpt, runId: runIdOpt }) =>
     Effect.promise(async () => {
       const target = Option.getOrUndefined(targetOpt);
       const state = Option.getOrUndefined(stateOpt);
       const tag = Option.getOrUndefined(tagOpt);
       const kind = Option.getOrUndefined(kindOpt);
       const action = Option.getOrUndefined(actionOpt);
+      const inputType = Option.getOrUndefined(inputTypeOpt);
+      const problemArea = Option.getOrUndefined(problemAreaOpt);
+      const sourceTitle = Option.getOrUndefined(titleOpt);
+      const targetRunId = Option.getOrUndefined(runIdOpt);
       const { createRuntime } = await import("../init.js");
       const runtime = await createRuntime();
+      const { IngestionService } = await import("../research/ingestion-service.js");
 
       try {
         const sessionId = runtime.memoryStore.getSessionId();
         const latestSession = runtime.orchestrator.sessionStore.listSessions(1)[0]?.id;
-        const resolvedSessionId = sessionId !== "pending"
+        let resolvedSessionId = sessionId !== "pending"
           ? sessionId
           : runtime.orchestrator.currentSession?.id ?? latestSession ?? runtime.memoryStore.getSessionId();
+
+        if (view === "ingest" && resolvedSessionId === "pending") {
+          const created = runtime.orchestrator.sessionStore.createSession(
+            runtime.orchestrator.currentProvider?.name ?? "claude",
+            runtime.orchestrator.currentModel ?? undefined,
+          );
+          resolvedSessionId = created.id;
+        }
 
         switch (view) {
           case "runs": {
@@ -98,6 +131,7 @@ export const research = Command.make(
             printLines([
               `${run.id}  mode=${run.automationPolicy.mode} workflow=${run.workflowState} status=${run.status}`,
               `approval  proposal=${run.automationPolicy.requireProposalApproval} experiment=${run.automationPolicy.requireExperimentApproval} revisit=${run.automationPolicy.requireRevisitApproval}`,
+              formatAutonomyLine(run),
               `retry  count=${run.automationState.retryCount}/${run.retryPolicy.maxRetries} retry_on=${run.retryPolicy.retryOn.join(",")}`,
               `checkpoint  last=${run.automationState.lastCheckpointAt ?? "n/a"} next=${run.automationState.nextCheckpointAt ?? "n/a"} interval_min=${run.checkpointPolicy.intervalMinutes}`,
               `timeout  at=${run.automationState.timeoutAt ?? "n/a"} max_run_min=${run.timeoutPolicy.maxRunMinutes} max_stage_min=${run.timeoutPolicy.maxStageMinutes ?? "n/a"}`,
@@ -147,7 +181,48 @@ export const research = Command.make(
           }
           case "ingestion": {
             const sources = runtime.teamStore.listIngestionSources(resolvedSessionId);
+            if (target) {
+              const source = sources.find((item) => item.sourceId === target);
+              if (!source) {
+                console.error(`No ingestion source found: ${target}`);
+                process.exit(1);
+              }
+              printLines([
+                `${source.sourceId}  ${source.sourceType.padEnd(10)} ${source.status.padEnd(10)} ${source.title}`,
+                `claims  ${source.claimCount ?? 0} canonical=${source.canonicalClaims?.length ?? 0} linked=${source.linkedProposalCount ?? 0}`,
+                `evidence  confidence=${source.evidenceConfidence ?? "n/a"} freshness=${source.freshnessScore ?? "n/a"}`,
+                `digest  ${source.sourceDigest ?? "n/a"}`,
+                `excerpt  ${source.sourceExcerpt ?? source.notes ?? "n/a"}`,
+                ...(source.extractedClaims ?? []).slice(0, 5).map((claim) => `claim  ${claim.disposition ?? "support"} confidence=${claim.confidence ?? "n/a"} ${claim.statement}`),
+                ...(source.extractedClaims ?? []).slice(0, 3).flatMap((claim) =>
+                  (claim.citationSpans ?? []).slice(0, 1).map((span) => `citation  ${span.locator ?? "n/a"} ${span.text}`),
+                ),
+              ]);
+              return;
+            }
             printLines(sources.map((source) => `${source.sourceId}  ${source.sourceType.padEnd(10)} ${source.status.padEnd(10)} claims=${source.claimCount ?? 0} canonical=${source.canonicalClaims?.length ?? 0} linked=${source.linkedProposalCount ?? 0} ${source.title}`));
+            return;
+          }
+          case "ingest": {
+            if (!target || !inputType || !problemArea) {
+              console.error("Usage: athena research ingest <value> --type url|document|text --problem-area <area> [--title <title>] [--run <run-id>]");
+              process.exit(1);
+            }
+            const ingestionService = new IngestionService(runtime.teamStore, runtime.teamOrchestrator);
+            const result = await ingestionService.ingest({
+              inputType: inputType as "url" | "document" | "text",
+              value: target,
+              problemArea,
+              title: sourceTitle,
+              runId: targetRunId,
+              sessionId: resolvedSessionId,
+            });
+            printLines([
+              `run  ${result.run.id} workflow=${result.run.workflowState} stage=${result.run.currentStage}`,
+              `source  ${result.source.sourceId} ${result.source.sourceType} ${result.source.status} ${result.source.title}`,
+              `claims  extracted=${result.pack.claims.length} canonical=${result.pack.canonicalClaims?.length ?? 0} contradictions=${result.pack.counterEvidence.length}`,
+              ...result.pack.claims.slice(0, 5).map((claim) => `claim  ${claim.disposition ?? "support"} confidence=${claim.confidence ?? "n/a"} ${claim.statement}`),
+            ]);
             return;
           }
           case "revisit": {
@@ -205,6 +280,8 @@ export const research = Command.make(
                   `support  confidence=${claim.confidence ?? "n/a"} freshness=${claim.freshnessScore ?? "n/a"}`,
                   `sources  ${claim.sourceIds.join(", ") || "n/a"}`,
                   `evidence  ${claim.evidenceIds.join(", ") || "n/a"}`,
+                  `source_attribution  ${claim.sourceAttributions?.map((item) => `${item.title}${item.locator ? `@${item.locator}` : ""}`).join(" | ") || "n/a"}`,
+                  `citations  ${claim.citationSpans?.map((item) => `${item.locator ?? "n/a"}:${item.text}`).join(" | ") || "n/a"}`,
                   `support_tags  ${claim.supportTags.join(", ") || "n/a"}`,
                   `contradiction_tags  ${claim.contradictionTags.join(", ") || "n/a"}`,
                 ]);
@@ -301,4 +378,25 @@ function printLines(lines: string[]): void {
   for (const line of lines) {
     console.log(line);
   }
+}
+
+function formatAutonomyLine(run: import("../research/contracts.js").TeamRunRecord): string {
+  if (run.automationPolicy.mode !== "fully-autonomous") {
+    return "autonomy  n/a";
+  }
+  const policy = run.automationPolicy.autonomyPolicy;
+  if (!policy) {
+    return "autonomy  n/a";
+  }
+
+  return [
+    "autonomy",
+    `risk=${policy.maxRiskTier}`,
+    `retry_cap=${policy.maxRetryCount ?? "n/a"}`,
+    `wall_min=${policy.maxWallClockMinutes ?? "n/a"}`,
+    `cost=${policy.maxCostUsd ?? "n/a"}`,
+    `evidence_floor=${policy.requireEvidenceFloor ?? "n/a"}`,
+    `rollback=${policy.requireRollbackPlan ?? false}`,
+    `machines=${policy.allowedMachineIds?.join(",") ?? "n/a"}`,
+  ].join("  ");
 }

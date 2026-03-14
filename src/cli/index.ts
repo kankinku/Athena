@@ -14,6 +14,7 @@
  *   athena report [session-id]      Generate experiment writeup
  *   athena init                     Initialize project config
  *   athena doctor                    Diagnose setup
+ *   athena security                  Show active security floor status
  *   athena search "query"            Search session histories
  *   athena export [session-id]       Export data to CSV/JSON
  *   athena kill <machine:pid>        Kill a running task
@@ -39,6 +40,7 @@ import { replay } from "./replay.js";
 import { report } from "./report.js";
 import { initCmd } from "./init-cmd.js";
 import { doctor } from "./doctor.js";
+import { security } from "./security.js";
 import { search } from "./search.js";
 import { exportCmd } from "./export.js";
 import { kill } from "./kill.js";
@@ -78,7 +80,7 @@ const athena = Command.make(
       });
     }),
 ).pipe(
-  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, search, exportCmd, kill, research]),
+  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, security, search, exportCmd, kill, research]),
 );
 
 // ── Launch ───────────────────────────────────────────────

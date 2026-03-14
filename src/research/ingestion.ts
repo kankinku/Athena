@@ -1,9 +1,12 @@
 import { nanoid } from "nanoid";
+import { createHash } from "node:crypto";
 import type {
   CanonicalClaim,
+  CitationSpan,
   ExtractedClaim,
   IngestionSourceRecord,
   ResearchCandidatePack,
+  SourceAttribution,
 } from "./contracts.js";
 import {
   buildCanonicalClaimId,
@@ -30,6 +33,18 @@ export function createIngestionSource(input: {
     linkedProposalCount: 0,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function updateIngestionSourceContent(
+  source: IngestionSourceRecord,
+  content: string,
+): IngestionSourceRecord {
+  return {
+    ...source,
+    sourceDigest: createHash("sha1").update(content).digest("hex").slice(0, 16),
+    sourceExcerpt: truncateText(content, 280),
+    updatedAt: Date.now(),
   };
 }
 
@@ -86,6 +101,10 @@ export function buildCanonicalClaims(claims: ExtractedClaim[]): CanonicalClaim[]
           sourceIds: dedupe([...current.sourceIds, ...(claim.sourceId ? [claim.sourceId] : [])]),
           confidence: averageDefined([current.confidence, claim.confidence]),
           freshnessScore: averageDefined([current.freshnessScore, claim.freshnessScore]),
+          citationSpans: dedupeCitationSpans([...(current.citationSpans ?? []), ...(claim.citationSpans ?? [])]),
+          sourceAttributions: dedupeSourceAttributions([...(current.sourceAttributions ?? []), ...(claim.sourceAttributions ?? [])]),
+          supportCount: (current.supportCount ?? 0) + (isSupportClaim(claim) ? 1 : 0),
+          contradictionCount: (current.contradictionCount ?? 0) + (isContradictionClaim(claim) ? 1 : 0),
         }
       : {
           canonicalClaimId,
@@ -100,6 +119,10 @@ export function buildCanonicalClaims(claims: ExtractedClaim[]): CanonicalClaim[]
           confidence: claim.confidence,
           freshnessScore: claim.freshnessScore,
           sourceIds: claim.sourceId ? [claim.sourceId] : [],
+          citationSpans: [...(claim.citationSpans ?? [])],
+          sourceAttributions: [...(claim.sourceAttributions ?? [])],
+          supportCount: isSupportClaim(claim) ? 1 : 0,
+          contradictionCount: isContradictionClaim(claim) ? 1 : 0,
         };
     canonicalMap.set(canonicalClaimId, next);
   }
@@ -139,6 +162,8 @@ function normalizeClaim(
   const supportTags = dedupe([...(claim.supportTags ?? []), ...inferSupportTags(claim.statement)]);
   const contradictionTags = dedupe([...(claim.contradictionTags ?? []), ...inferContradictionTags(claim.statement)]);
   const normalizedStatement = normalizeClaimStatement(claim.statement);
+  const citationSpans = claim.citationSpans ?? buildCitationSpans(claim.statement, claim.rationaleSpans);
+  const sourceAttributions = claim.sourceAttributions ?? buildSourceAttributions(source, citationSpans);
   const semanticKey = buildClaimSemanticKey({
     statement: claim.statement,
     methodTag: normalizedMethodTag,
@@ -160,11 +185,83 @@ function normalizeClaim(
     methodTag: normalizedMethodTag,
     supportTags,
     contradictionTags,
+    citationSpans,
+    sourceAttributions,
+    disposition: claim.disposition ?? inferDisposition(supportTags, contradictionTags),
   };
+}
+
+function buildCitationSpans(statement: string, rationaleSpans?: string[]): CitationSpan[] {
+  const spans = (rationaleSpans && rationaleSpans.length > 0 ? rationaleSpans : [statement])
+    .filter(isNonEmptyString)
+    .map((text, index) => ({
+      text,
+      start: index === 0 ? 0 : statement.indexOf(text),
+      end: index === 0 ? statement.length : statement.indexOf(text) + text.length,
+      locator: `span:${index + 1}`,
+    }))
+    .map((span) => ({
+      ...span,
+      start: Math.max(0, span.start),
+      end: Math.max(span.start, span.end),
+    }));
+  return dedupeCitationSpans(spans);
+}
+
+function buildSourceAttributions(
+  source: IngestionSourceRecord,
+  citationSpans: CitationSpan[],
+): SourceAttribution[] {
+  if (citationSpans.length === 0) {
+    return [{ sourceId: source.sourceId, title: source.title, url: source.url }];
+  }
+  return citationSpans.map((span) => ({
+    sourceId: source.sourceId,
+    title: source.title,
+    url: source.url,
+    locator: span.locator,
+  }));
+}
+
+function inferDisposition(
+  supportTags: string[],
+  contradictionTags: string[],
+): ExtractedClaim["disposition"] {
+  if (supportTags.length > 0 && contradictionTags.length > 0) return "mixed";
+  if (contradictionTags.length > 0) return "contradiction";
+  return "support";
+}
+
+function isSupportClaim(claim: ExtractedClaim): boolean {
+  return (claim.disposition ?? inferDisposition(claim.supportTags ?? [], claim.contradictionTags ?? [])) !== "contradiction";
+}
+
+function isContradictionClaim(claim: ExtractedClaim): boolean {
+  return (claim.disposition ?? inferDisposition(claim.supportTags ?? [], claim.contradictionTags ?? [])) !== "support";
 }
 
 function dedupe(items: string[]): string[] {
   return [...new Set(items)];
+}
+
+function dedupeCitationSpans(items: CitationSpan[]): CitationSpan[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.text}:${item.start}:${item.end}:${item.locator ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeSourceAttributions(items: SourceAttribution[]): SourceAttribution[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.sourceId}:${item.title}:${item.url ?? ""}:${item.locator ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function isNonEmptyString(value: string | undefined): value is string {
@@ -179,4 +276,8 @@ function average(values: Array<number | undefined>): number | undefined {
   const valid = values.filter((value): value is number => typeof value === "number");
   if (valid.length === 0) return undefined;
   return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function truncateText(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}...`;
 }

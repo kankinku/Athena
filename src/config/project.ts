@@ -31,6 +31,21 @@ export interface ProjectConfig {
   };
   /** Working directory for experiments (relative to project root) */
   experimentDir?: string;
+  /** Minimal local security floor for command and path access */
+  security?: {
+    enabled?: boolean;
+    mode?: "audit" | "enforce";
+    commandPolicy?: {
+      allowPatterns?: string[];
+      reviewPatterns?: string[];
+      blockPatterns?: string[];
+    };
+    pathPolicy?: {
+      allowReadPaths?: string[];
+      allowWritePaths?: string[];
+      protectedPaths?: string[];
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------

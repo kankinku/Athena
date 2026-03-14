@@ -60,17 +60,21 @@ import { ExperimentBrancher } from "./experiments/branching.js";
 import { TeamStore } from "./research/team-store.js";
 import { TeamOrchestrator } from "./research/team-orchestrator.js";
 import { SimulationRunner } from "./research/simulation-runner.js";
+import { ResearchSessionBootstrapper } from "./research/session-bootstrap.js";
+import { IngestionService } from "./research/ingestion-service.js";
+import { ResearchAutomationManager } from "./research/automation-manager.js";
+import { SecurityManager } from "./security/policy.js";
 
 const SYSTEM_PROMPT = `You are Athena, an autonomous ML research agent. You help researchers design, run, and monitor machine learning experiments on local and remote machines.
 
 ## Machines
-- "local" is always available — it runs commands on the user's machine directly (no SSH).
+- "local" is always available ??it runs commands on the user's machine directly (no SSH).
 - Remote machines are added by the user via /machine add. Use list_machines to see what's available.
 - Prefer remote machines for heavy compute (training, GPU workloads). Use "local" for lightweight tasks or when no remote machines are configured.
 
 ## Capabilities
-- Execute quick commands locally or remotely (remote_exec) — ONLY for short commands like ls, cat, pip install, git clone
-- Launch and monitor training runs (remote_exec_background) — ALL training, evaluation, and long-running processes
+- Execute quick commands locally or remotely (remote_exec) ??ONLY for short commands like ls, cat, pip install, git clone
+- Launch and monitor training runs (remote_exec_background) ??ALL training, evaluation, and long-running processes
 - Track metrics like loss, accuracy, rewards (show_metrics)
 - Transfer files between local and remote machines (remote_upload, remote_download)
 - Read, write, and edit files on any machine (read_file, write_file, patch_file)
@@ -81,15 +85,21 @@ const SYSTEM_PROMPT = `You are Athena, an autonomous ML research agent. You help
 - List configured machines (list_machines)
 - Consult the other AI provider for a second opinion (consult)
 
+## Security Floor
+- Athena may block or require approval for dangerous shell commands or sensitive file paths.
+- Prefer working inside the project workspace and experiment directories.
+- Avoid reading or writing secrets, SSH keys, auth stores, or system directories unless the operator explicitly configured an allow rule.
+- If a tool call is blocked by security policy, choose a safer path or explain what permission needs to be granted.
+
 ## MANDATORY: Use remote_exec_background for ALL Runs
-**EVERY training run, evaluation, benchmark, or process that takes more than a few seconds MUST use remote_exec_background.** Never use remote_exec for these — it blocks, produces no dashboard output, and breaks the entire monitoring pipeline.
+**EVERY training run, evaluation, benchmark, or process that takes more than a few seconds MUST use remote_exec_background.** Never use remote_exec for these ??it blocks, produces no dashboard output, and breaks the entire monitoring pipeline.
 
 remote_exec_background:
 - Returns a pid and log_path
 - Automatically appears in the TASKS panel
-- Stdout/stderr is captured — Athena parses it for live metrics in the dashboard
+- Stdout/stderr is captured ??Athena parses it for live metrics in the dashboard
 - **DO NOT redirect stdout in your command** (no > file, no tee, no logging to file). Redirecting stdout breaks metric collection.
-- To check output, use task_output — do NOT manually tail or cat the log file.
+- To check output, use task_output ??do NOT manually tail or cat the log file.
 
 remote_exec is ONLY for quick one-shot commands (installing packages, checking files, git operations).
 
@@ -98,7 +108,7 @@ When calling remote_exec_background, pass **metric_names** or **metric_patterns*
 
 - **metric_names**: List of names to parse in key=value or key: value format from stdout.
   Example: metric_names=["loss", "acc", "lr"] matches "loss=0.234 acc=0.95 lr=1e-4"
-- **metric_patterns**: Map of name → regex with one capture group for the numeric value.
+- **metric_patterns**: Map of name ??regex with one capture group for the numeric value.
   Example: metric_patterns={"loss": "Loss:\\\\s*([\\\\d.e+-]+)"} matches "Loss: 0.234"
 
 If neither is provided, no metrics will be tracked. ALWAYS specify metrics when launching a training run.
@@ -109,11 +119,11 @@ Use **clear_metrics** to wipe stale data when discarding a failed run before sta
 
 ## Viewing Task Output
 Use task_output to check on running tasks:
-- task_output(machine_id, pid) — shows recent stdout/stderr
-- task_output(machine_id, pid, lines=100) — show more lines
+- task_output(machine_id, pid) ??shows recent stdout/stderr
+- task_output(machine_id, pid, lines=100) ??show more lines
 This is the preferred way to check task progress. Do not use remote_exec to manually tail logs.
 
-## Monitoring Loop — PREFERRED APPROACH
+## Monitoring Loop ??PREFERRED APPROACH
 After launching a background task, use **start_monitor** to set up periodic check-ins:
 - start_monitor(goal="Train TinyStories to loss < 5.0", interval_minutes=2)
 - The system will re-invoke you every N minutes with a status update containing:
@@ -122,7 +132,7 @@ After launching a background task, use **start_monitor** to set up periodic chec
 - Call **stop_monitor** when the objective is complete
 
 Set the interval to match what you're waiting for. Short runs: 1-2m. Medium runs: 5m. Long runs: 10-15m.
-**IMPORTANT:** Calling start_monitor again replaces the current monitor — use this to adjust the interval as conditions change. If you've started a run, it's probably a good idea to increase the monitoring interval.
+**IMPORTANT:** Calling start_monitor again replaces the current monitor ??use this to adjust the interval as conditions change. If you've started a run, it's probably a good idea to increase the monitoring interval.
 
 **CRITICAL: NEVER use \`sleep\` as a shell command (e.g., remote_exec with "sleep 60").** The shell sleep command wastes resources and blocks execution.
 
@@ -137,36 +147,36 @@ Triggers can be composed with AND/OR logic. Prefer start_monitor for ongoing exp
 
 ## Showing Metrics to the User
 Use show_metrics to render sparkline charts and values inline in the conversation:
-- show_metrics(metric_names=["loss", "acc"]) — show specific metrics
-- show_metrics(metric_names=["loss"], lines=100) — more data points
+- show_metrics(metric_names=["loss", "acc"]) ??show specific metrics
+- show_metrics(metric_names=["loss"], lines=100) ??more data points
 Use this when reporting results to the user so they can see the data.
 
 ## Comparing Experiments
 Use compare_runs to compare two experiment runs side-by-side:
-- compare_runs(task_a="local:1234", task_b="local:5678") — compare all shared metrics
+- compare_runs(task_a="local:1234", task_b="local:5678") ??compare all shared metrics
 Returns deltas and direction (improved/worsened/unchanged) for each metric. Use this to decide whether to keep or discard an experimental change.
 
 ## Experiment Branching
 When working in a git repo, use experiment branches to track code changes per experiment:
-1. **exp_branch(machine_id, repo_path, experiment_name)** — create a new branch before modifying code
+1. **exp_branch(machine_id, repo_path, experiment_name)** ??create a new branch before modifying code
 2. Make your code changes and launch the experiment
-3. **exp_commit(machine_id, repo_path, branch, message)** — commit results when done
-4. **exp_diff(machine_id, repo_path, branch_a, branch_b)** — compare code between experiments
-5. **exp_checkout(machine_id, branch)** — return to the original branch
-6. **exp_branches(machine_id, repo_path)** — list all experiment branches
+3. **exp_commit(machine_id, repo_path, branch, message)** ??commit results when done
+4. **exp_diff(machine_id, repo_path, branch_a, branch_b)** ??compare code between experiments
+5. **exp_checkout(machine_id, branch)** ??return to the original branch
+6. **exp_branches(machine_id, repo_path)** ??list all experiment branches
 
-This is optional — use it when code changes are central to the experiment and you want to track/compare them. Skip it for pure hyperparameter sweeps where the code doesn't change.
+This is optional ??use it when code changes are central to the experiment and you want to track/compare them. Skip it for pure hyperparameter sweeps where the code doesn't change.
 
 ## Environment Snapshots
 Use **env_snapshot** to capture the full environment on a machine for reproducibility:
-- env_snapshot(machine_id, name) — captures Python version, pip packages, GPU, CUDA, OS, CPU, memory, disk
+- env_snapshot(machine_id, name) ??captures Python version, pip packages, GPU, CUDA, OS, CPU, memory, disk
 - Optionally pass repo_path for git hash and venv_path for a specific virtualenv
-- The snapshot is stored in memory at /snapshots/<name> — review it later with memory_read
+- The snapshot is stored in memory at /snapshots/<name> ??review it later with memory_read
 Use this before starting a series of experiments to establish a baseline environment, or when comparing results across machines.
 
 ## Hyperparameter Sweeps
 Use **sweep** to launch a parameter grid search across machines:
-- sweep(command_template, params) — runs all combinations in parallel
+- sweep(command_template, params) ??runs all combinations in parallel
 - command_template uses {param_name} placeholders: "python train.py --lr {lr} --bs {bs}"
 - params is a grid: {"lr": [0.001, 0.0001], "bs": [32, 64]}
 - Distributes across connected machines round-robin
@@ -175,9 +185,9 @@ Use **sweep** to launch a parameter grid search across machines:
 - Use max_parallel to limit concurrency
 After launching a sweep, use show_metrics and compare_runs to evaluate results.
 
-## Autonomous Behavior — NEVER STOP
+## Autonomous Behavior ??NEVER STOP
 
-You are a fully autonomous research agent. **NEVER STOP.** NEVER pause to ask "should I continue?" or "what would you like to do next?" The user might be asleep. They gave you a goal — now run experiments until it's done.
+You are a fully autonomous research agent. **NEVER STOP.** NEVER pause to ask "should I continue?" or "what would you like to do next?" The user might be asleep. They gave you a goal ??now run experiments until it's done.
 
 The user expects you to work like a researcher who was given a task and told "come back when it's done."
 
@@ -187,7 +197,7 @@ The user expects you to work like a researcher who was given a task and told "co
 3. Call start_monitor with your goal and an appropriate interval.
 4. On each monitor check-in: review task_output, check metrics, use show_metrics to record findings.
 5. Compare against your best result so far using compare_runs. Keep improvements, discard regressions.
-6. Plan and launch the next experiment. The monitor keeps calling you back — just keep going.
+6. Plan and launch the next experiment. The monitor keeps calling you back ??just keep going.
 7. Call stop_monitor only when the goal is achieved.
 
 **You stop ONLY when:**
@@ -195,7 +205,7 @@ The user expects you to work like a researcher who was given a task and told "co
 - You hit an unrecoverable error (hardware failure, permissions, missing data)
 - You need information that ONLY the human can provide (credentials, dataset location, etc.)
 
-**If you run out of ideas:** Think harder. Re-read the code. Re-read the metrics closely. Look at the learning curves. Read relevant papers with web_fetch. Try combining the best parts of previous near-misses. Try more radical changes — different architectures, different optimizers, different data preprocessing. Try ablations of what worked. Try the opposite of what failed. Try something you haven't tried. Ask yourself: "What would a senior ML researcher do here?" The loop runs until the human interrupts you.
+**If you run out of ideas:** Think harder. Re-read the code. Re-read the metrics closely. Look at the learning curves. Read relevant papers with web_fetch. Try combining the best parts of previous near-misses. Try more radical changes ??different architectures, different optimizers, different data preprocessing. Try ablations of what worked. Try the opposite of what failed. Try something you haven't tried. Ask yourself: "What would a senior ML researcher do here?" The loop runs until the human interrupts you.
 
 **Keep/discard discipline:** After each experiment, explicitly compare metrics to your current best. If improved, keep and record it. If equal or worse, discard/revert. Always know what your current best result is and why.
 
@@ -205,13 +215,13 @@ When the conversation gets too long, your context will be checkpointed: history 
 
 **Tools**: memory_ls, memory_read, memory_write, memory_rm
 
-**CRITICAL: Proactively store important findings as you work.** Don't wait for a checkpoint — write to memory as you go:
+**CRITICAL: Proactively store important findings as you work.** Don't wait for a checkpoint ??write to memory as you go:
 - Store the goal at /goal
 - Store your current best result at /best
 - Store observations at /observations/<name>
 - Store hypotheses at /hypotheses/<name>
 - Store decisions at /decisions/<name>
-- Store sources at /sources/<name> — **any time** you build on another agent's work, fetch a commit, or read a useful hub post, immediately write a source entry with the agent ID, commit hash or post ID, and what you took from it
+- Store sources at /sources/<name> ??**any time** you build on another agent's work, fetch a commit, or read a useful hub post, immediately write a source entry with the agent ID, commit hash or post ID, and what you took from it
 - Experiments are auto-tracked at /experiments/ when you use remote_exec_background
 
 After a checkpoint, you'll see a tree listing of all your stored knowledge. Use memory_read(path) to retrieve details, and memory_ls to explore.
@@ -234,7 +244,7 @@ Use **consult** if you find yourself stuck. It sends a question to the other AI 
 const HUB_PROMPT_ADDENDUM = `
 
 ## AgentHub Collaboration
-You are connected to AgentHub — a shared platform where multiple agents publish experiment code and results.
+You are connected to AgentHub ??a shared platform where multiple agents publish experiment code and results.
 
 - **hub_leaves**: See the frontier of experiments (latest commits from all agents). Check this before starting work to avoid duplicating effort.
 - **hub_log**: Browse recent commits, optionally filtered by agent.
@@ -245,7 +255,7 @@ You are connected to AgentHub — a shared platform where multiple agents publis
 - **hub_read**: Read what other agents have posted.
 - **hub_reply**: Respond to another agent's post.
 
-**Workflow**: Check leaves/posts before starting → run experiments → push results + post findings. Build on what works, note what doesn't.
+**Workflow**: Check leaves/posts before starting ??run experiments ??push results + post findings. Build on what works, note what doesn't.
 
 **Source tracking**: Every time you fetch a commit or read a useful post, immediately write to /sources/<name> in memory with the agent ID, commit hash or post ID, and what you used from it. This ensures proper attribution survives context checkpoints. When writing experiment writeups, cite these sources.`;
 
@@ -262,6 +272,8 @@ export interface AthenaRuntime {
   teamStore: TeamStore;
   teamOrchestrator: TeamOrchestrator;
   simulationRunner: SimulationRunner;
+  automationManager: ResearchAutomationManager;
+  securityManager: SecurityManager;
   memoryStore: MemoryStore;
   stickyManager: StickyManager;
   resourceCollector: ResourceCollector;
@@ -278,70 +290,106 @@ export interface RuntimeOptions {
   claudeMode?: "cli" | "api";
 }
 
+type ProjectConfig = ReturnType<typeof findProjectConfig>;
+type Preferences = ReturnType<typeof loadPreferences>;
+type HubConfig = ReturnType<typeof loadHubConfig>;
+
+interface RuntimeBootstrapConfig {
+  agentId: string;
+  initialClaudeMode: RuntimeOptions["claudeMode"] | undefined;
+  initialProvider: "claude" | "openai";
+  prefs: Preferences;
+  projectConfig: ProjectConfig;
+  securityManager: SecurityManager;
+}
+
+interface ProviderBundle {
+  claudeProvider: ClaudeProvider;
+  openaiOAuth: OpenAIOAuth;
+  openaiProvider: OpenAIProvider;
+  sessionStore: SessionStore;
+}
+
+interface RemoteBundle {
+  connectionPool: ConnectionPool;
+  executor: RemoteExecutor;
+  fileSync: FileSync;
+  metricCollector: MetricCollector;
+  metricStore: MetricStore;
+  resourceCollector: ResourceCollector;
+}
+
+interface MemoryBundle {
+  contextGate: ContextGate;
+  experimentTracker: ExperimentTracker;
+  graphMemory: GraphMemory;
+  memoryStore: MemoryStore;
+  teamStore: TeamStore;
+}
+
+interface ResearchBundle {
+  automationManager: ResearchAutomationManager;
+  ingestionService: IngestionService;
+  researchBootstrapper: ResearchSessionBootstrapper;
+  simulationRunner: SimulationRunner;
+  teamOrchestrator: TeamOrchestrator;
+}
+
+interface CoreToolDeps {
+  connectionPool: ConnectionPool;
+  executor: RemoteExecutor;
+  experimentBrancher: ExperimentBrancher;
+  fileSync: FileSync;
+  memoryStore: MemoryStore;
+  metricCollector: MetricCollector;
+  metricStore: MetricStore;
+  orchestrator: Orchestrator;
+  securityManager: SecurityManager;
+  sessionStore: SessionStore;
+  teamStore: TeamStore;
+}
+
+interface ResearchToolDeps {
+  automationManager: ResearchAutomationManager;
+  graphMemory: GraphMemory;
+  ingestionService: IngestionService;
+  orchestrator: Orchestrator;
+  sessionIdGetter: () => string;
+  simulationRunner: SimulationRunner;
+  teamOrchestrator: TeamOrchestrator;
+  teamStore: TeamStore;
+}
+
 export async function createRuntime(options: RuntimeOptions = {}): Promise<AthenaRuntime> {
-  // Project config (athena.json in cwd or parent dirs)
-  const projectConfig = findProjectConfig();
+  const bootstrap = resolveRuntimeBootstrap(options);
+  const providers = createProviderBundle(bootstrap.initialClaudeMode, bootstrap.agentId);
+  const remote = createRemoteBundle(bootstrap.securityManager, bootstrap.agentId);
+  const memory = createMemoryBundle(remote.executor, remote.metricStore);
+  const notifier = createNotifier(bootstrap.projectConfig);
+  const experimentBrancher = new ExperimentBrancher(remote.executor);
+  const stickies = new StickyManager();
+  const hubConfig = loadHubConfig();
+  const systemPrompt = buildSystemPrompt(bootstrap.projectConfig, hubConfig);
 
-  const prefs = loadPreferences();
-  const initialProvider = options.provider ?? projectConfig?.provider ?? prefs.lastProvider ?? "claude";
-  const initialClaudeMode = options.claudeMode ?? prefs.claudeAuthMode;
-  const agentId = process.env.AGENTHUB_AGENT ?? "";
-
-  // Auth
-  const authManager = new AuthManager();
-  const openaiOAuth = new OpenAIOAuth(authManager);
-  authManager.registerRefreshHandler("openai", (rt) => openaiOAuth.refresh(rt));
-
-  // Shared session store (single instance for orchestrator + both providers)
-  const sessionStore = new SessionStore(agentId);
-
-  // Providers
-  const claudeProvider = new ClaudeProvider(authManager, initialClaudeMode, sessionStore);
-  const openaiProvider = new OpenAIProvider(authManager, sessionStore);
-
-  // Remote
-  const connPool = new ConnectionPool();
-  const machines = loadMachines();
-  for (const machine of machines) {
-    connPool.addMachine(machine);
-    connPool.connect(machine.id).catch((err) => {
-      process.stderr.write(`[athena] Failed to connect to ${machine.id}: ${formatError(err)}\n`);
-    });
-  }
-
-  const exec = new RemoteExecutor(connPool);
-  const fileSync = new FileSync();
-  for (const machine of machines) {
-    fileSync.addMachine(machine);
-  }
-
-  // Metrics
-  const metricStore = new MetricStore(agentId);
-  const metricCollector = new MetricCollector(connPool, metricStore);
-
-  // Memory
-  const memoryStore = new MemoryStore("pending");
-  const contextGate = new ContextGate(memoryStore);
-  contextGate.setExecutor(exec);
-  contextGate.setMetricStore(metricStore);
-  const expTracker = new ExperimentTracker(memoryStore);
-  const graphMemory = new GraphMemory(memoryStore);
-  const teamStore = new TeamStore();
-
-  // Resources, notifications, experiment branching
-  const resourceCollector = new ResourceCollector(connPool);
-  const notifier = projectConfig?.notifications
-    ? new Notifier({
-        channels: projectConfig.notifications.channels,
-        events: projectConfig.notifications.events as any,
-      })
-    : null;
-  const experimentBrancher = new ExperimentBrancher(exec);
+  const { agentId, initialProvider, prefs, projectConfig, securityManager } = bootstrap;
+  const { claudeProvider, openaiOAuth, openaiProvider, sessionStore } = providers;
+  const connPool = remote.connectionPool;
+  const exec = remote.executor;
+  const fileSync = remote.fileSync;
+  const metricCollector = remote.metricCollector;
+  const metricStore = remote.metricStore;
+  const resourceCollector = remote.resourceCollector;
+  const contextGate = memory.contextGate;
+  const expTracker = memory.experimentTracker;
+  const graphMemory = memory.graphMemory;
+  const memoryStore = memory.memoryStore;
+  const teamStore = memory.teamStore;
   const teamOrchestrator = new TeamOrchestrator(
     teamStore,
     graphMemory,
     () => memoryStore.getSessionId(),
   );
+  const ingestionService = new IngestionService(teamStore, teamOrchestrator);
   const simulationRunner = new SimulationRunner(
     exec,
     connPool,
@@ -355,29 +403,15 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
       lastInputTokens: orch.lastInputTokens,
     }),
   );
+  const automationManager = new ResearchAutomationManager(
+    teamStore,
+    teamOrchestrator,
+    simulationRunner,
+    exec,
+    metricCollector,
+  );
   contextGate.setGraphMemory(graphMemory);
   contextGate.setTeamStore(teamStore);
-
-  // Stickies
-  const stickies = new StickyManager();
-
-  // Hub config
-  const hubConfig = loadHubConfig();
-
-  // System prompt
-  let systemPrompt = SYSTEM_PROMPT;
-  if (hubConfig?.agentName) {
-    systemPrompt = systemPrompt.replace(
-      "You are Athena, an autonomous ML research agent.",
-      `You are Athena agent "${hubConfig.agentName}". This is your unique identity — your agent ID is "${hubConfig.agentName}". When creating directories, naming files, identifying yourself in posts, or any time you need "your name" or "your agent ID", use "${hubConfig.agentName}". You are an autonomous ML research agent.`,
-    );
-  }
-  if (hubConfig) {
-    systemPrompt += HUB_PROMPT_ADDENDUM;
-  }
-  if (projectConfig?.instructions) {
-    systemPrompt += `\n\n## Project Instructions\n${projectConfig.instructions}`;
-  }
 
   // Orchestrator
   const orch = new Orchestrator({
@@ -388,59 +422,49 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
   });
   orch.setContextGate(contextGate);
   orch.setStickyManager(stickies);
+  const researchBootstrapper = new ResearchSessionBootstrapper(teamStore, teamOrchestrator);
+  orch.setBeforeSendHook(({ session, message, provider }) => {
+    researchBootstrapper.ensurePromptRun({
+      sessionId: session.id,
+      prompt: message,
+      provider: provider.name,
+      model: provider.currentModel,
+    });
+  });
   orch.registerProvider(claudeProvider);
   orch.registerProvider(openaiProvider);
 
-  // Tools
-  orch.registerTools([
-    createRemoteExecTool(exec),
-    createRemoteExecBackgroundTool(exec, metricCollector),
-    createUploadTool(fileSync),
-    createDownloadTool(fileSync),
-    createListMachinesTool(connPool),
-    createTaskOutputTool(exec, connPool),
-    createShowMetricsTool(metricStore),
-    createCompareRunsTool(metricStore),
-    createClearMetricsTool(metricStore, metricCollector),
-    createKillTaskTool(exec, connPool, metricCollector),
-    createReadFileTool(connPool),
-    createWriteFileTool(connPool),
-    createPatchFileTool(connPool),
-    createWebFetchTool(),
-    ...createMemoryTools(memoryStore),
-    createConsultTool(
-      () => orch.currentProvider?.name ?? null,
-      (name) => orch.getProvider(name),
-    ),
-    createWriteupTool(
-      () => orch.currentProvider ?? null,
-      () => orch.currentSession?.id ?? null,
-      teamStore,
-      sessionStore,
-    ),
-    ...createExperimentBranchTools(experimentBrancher),
-    createEnvSnapshotTool(exec, memoryStore),
-    createSweepTool(exec, connPool, metricCollector),
-    ...createResearchOrchestrationTools(
-      graphMemory,
-      teamOrchestrator,
-      simulationRunner,
-      teamStore,
-      () => memoryStore.getSessionId(),
-    ),
-  ]);
+  registerCoreTools({
+    connectionPool: connPool,
+    executor: exec,
+    experimentBrancher,
+    fileSync,
+    memoryStore,
+    metricCollector,
+    metricStore,
+    orchestrator: orch,
+    securityManager,
+    sessionStore,
+    teamStore,
+  });
+  registerResearchTools({
+    automationManager,
+    graphMemory,
+    ingestionService,
+    orchestrator: orch,
+    sessionIdGetter: () => memoryStore.getSessionId(),
+    simulationRunner,
+    teamOrchestrator,
+    teamStore,
+  });
 
   if (hubConfig) {
     const hubClient = new HubClient(hubConfig);
     orch.registerTools(createHubTools(hubClient, exec));
   }
 
-  // Scheduler
   const triggerScheduler = new TriggerScheduler(connPool);
-  const sleepMgr = new SleepManager(triggerScheduler, orch);
-  sleepMgr.setExecutor(exec);
-  sleepMgr.setConnectionPool(connPool);
-  sleepMgr.setMetricStore(metricStore);
+  const sleepMgr = createSleepManager(triggerScheduler, orch, exec, connPool, metricStore);
   orch.registerTool(createSleepTool(sleepMgr));
 
   // Monitor
@@ -450,15 +474,8 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
     createStopMonitorTool(monitorMgr),
   ]);
 
-  // Activate provider — await so it's ready before callers use the runtime
-  try {
-    await orch.switchProvider(initialProvider);
-    const model = projectConfig?.model ?? prefs.model;
-    if (model) await orch.setModel(model);
-    if (prefs.reasoningEffort) await orch.setReasoningEffort(prefs.reasoningEffort as any);
-  } catch (err) {
-    process.stderr.write(`[athena] Failed to authenticate ${initialProvider} provider: ${formatError(err)}\n`);
-  }
+  // Activate the initial provider before exposing the runtime.
+  await activateInitialProvider(orch, bootstrap);
 
   return {
     orchestrator: orch,
@@ -473,6 +490,8 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
     teamStore,
     teamOrchestrator,
     simulationRunner,
+    automationManager,
+    securityManager,
     memoryStore,
     stickyManager: stickies,
     resourceCollector,
@@ -487,4 +506,181 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
       connPool.disconnectAll();
     },
   };
+}
+
+function resolveRuntimeBootstrap(options: RuntimeOptions): RuntimeBootstrapConfig {
+  const projectConfig = findProjectConfig();
+  const securityManager = new SecurityManager(projectConfig?.security);
+  const prefs = loadPreferences();
+
+  return {
+    agentId: process.env.AGENTHUB_AGENT ?? "",
+    initialClaudeMode: options.claudeMode ?? prefs.claudeAuthMode,
+    initialProvider: options.provider ?? projectConfig?.provider ?? prefs.lastProvider ?? "claude",
+    prefs,
+    projectConfig,
+    securityManager,
+  };
+}
+
+function createProviderBundle(
+  initialClaudeMode: RuntimeOptions["claudeMode"] | undefined,
+  agentId: string,
+): ProviderBundle {
+  const authManager = new AuthManager();
+  const openaiOAuth = new OpenAIOAuth(authManager);
+  authManager.registerRefreshHandler("openai", (refreshToken) => openaiOAuth.refresh(refreshToken));
+
+  const sessionStore = new SessionStore(agentId);
+  return {
+    claudeProvider: new ClaudeProvider(authManager, initialClaudeMode, sessionStore),
+    openaiOAuth,
+    openaiProvider: new OpenAIProvider(authManager, sessionStore),
+    sessionStore,
+  };
+}
+
+function createRemoteBundle(securityManager: SecurityManager, agentId: string): RemoteBundle {
+  const connectionPool = new ConnectionPool(securityManager);
+  const machines = loadMachines();
+  for (const machine of machines) {
+    connectionPool.addMachine(machine);
+    connectionPool.connect(machine.id).catch((err) => {
+      process.stderr.write(`[athena] Failed to connect to ${machine.id}: ${formatError(err)}\n`);
+    });
+  }
+
+  const executor = new RemoteExecutor(connectionPool);
+  const fileSync = new FileSync(securityManager);
+  for (const machine of machines) {
+    fileSync.addMachine(machine);
+  }
+
+  const metricStore = new MetricStore(agentId);
+  return {
+    connectionPool,
+    executor,
+    fileSync,
+    metricCollector: new MetricCollector(connectionPool, metricStore),
+    metricStore,
+    resourceCollector: new ResourceCollector(connectionPool),
+  };
+}
+
+function createMemoryBundle(executor: RemoteExecutor, metricStore: MetricStore): MemoryBundle {
+  const memoryStore = new MemoryStore("pending");
+  const contextGate = new ContextGate(memoryStore);
+  contextGate.setExecutor(executor);
+  contextGate.setMetricStore(metricStore);
+
+  return {
+    contextGate,
+    experimentTracker: new ExperimentTracker(memoryStore),
+    graphMemory: new GraphMemory(memoryStore),
+    memoryStore,
+    teamStore: new TeamStore(),
+  };
+}
+
+function createNotifier(projectConfig: ProjectConfig): Notifier | null {
+  return projectConfig?.notifications
+    ? new Notifier({
+        channels: projectConfig.notifications.channels,
+        events: projectConfig.notifications.events as any,
+      })
+    : null;
+}
+
+function buildSystemPrompt(projectConfig: ProjectConfig, hubConfig: HubConfig): string {
+  let systemPrompt = SYSTEM_PROMPT;
+  if (hubConfig?.agentName) {
+    systemPrompt = systemPrompt.replace(
+      "You are Athena, an autonomous ML research agent.",
+      `You are Athena agent "${hubConfig.agentName}". This is your unique identity ??your agent ID is "${hubConfig.agentName}". When creating directories, naming files, identifying yourself in posts, or any time you need "your name" or "your agent ID", use "${hubConfig.agentName}". You are an autonomous ML research agent.`,
+    );
+  }
+  if (hubConfig) {
+    systemPrompt += HUB_PROMPT_ADDENDUM;
+  }
+  if (projectConfig?.instructions) {
+    systemPrompt += `\n\n## Project Instructions\n${projectConfig.instructions}`;
+  }
+  return systemPrompt;
+}
+
+function registerCoreTools(deps: CoreToolDeps): void {
+  deps.orchestrator.registerTools([
+    createRemoteExecTool(deps.executor),
+    createRemoteExecBackgroundTool(deps.executor, deps.metricCollector),
+    createUploadTool(deps.fileSync, deps.securityManager),
+    createDownloadTool(deps.fileSync, deps.securityManager),
+    createListMachinesTool(deps.connectionPool),
+    createTaskOutputTool(deps.executor, deps.connectionPool),
+    createShowMetricsTool(deps.metricStore),
+    createCompareRunsTool(deps.metricStore),
+    createClearMetricsTool(deps.metricStore, deps.metricCollector),
+    createKillTaskTool(deps.executor, deps.connectionPool, deps.metricCollector),
+    createReadFileTool(deps.connectionPool, deps.securityManager),
+    createWriteFileTool(deps.connectionPool, deps.securityManager),
+    createPatchFileTool(deps.connectionPool, deps.securityManager),
+    createWebFetchTool(),
+    ...createMemoryTools(deps.memoryStore),
+    createConsultTool(
+      () => deps.orchestrator.currentProvider?.name ?? null,
+      (name) => deps.orchestrator.getProvider(name),
+    ),
+    createWriteupTool(
+      () => deps.orchestrator.currentProvider ?? null,
+      () => deps.orchestrator.currentSession?.id ?? null,
+      deps.teamStore,
+      deps.sessionStore,
+    ),
+    ...createExperimentBranchTools(deps.experimentBrancher),
+    createEnvSnapshotTool(deps.executor, deps.memoryStore),
+    createSweepTool(deps.executor, deps.connectionPool, deps.metricCollector),
+  ]);
+}
+
+function registerResearchTools(deps: ResearchToolDeps): void {
+  deps.orchestrator.registerTools(
+    createResearchOrchestrationTools(
+      deps.graphMemory,
+      deps.teamOrchestrator,
+      deps.simulationRunner,
+      deps.teamStore,
+      deps.ingestionService,
+      deps.automationManager,
+      deps.sessionIdGetter,
+    ),
+  );
+}
+
+function createSleepManager(
+  triggerScheduler: TriggerScheduler,
+  orchestrator: Orchestrator,
+  executor: RemoteExecutor,
+  connectionPool: ConnectionPool,
+  metricStore: MetricStore,
+): SleepManager {
+  const sleepManager = new SleepManager(triggerScheduler, orchestrator);
+  sleepManager.setExecutor(executor);
+  sleepManager.setConnectionPool(connectionPool);
+  sleepManager.setMetricStore(metricStore);
+  return sleepManager;
+}
+
+async function activateInitialProvider(
+  orchestrator: Orchestrator,
+  bootstrap: RuntimeBootstrapConfig,
+): Promise<void> {
+  try {
+    await orchestrator.switchProvider(bootstrap.initialProvider);
+    const model = bootstrap.projectConfig?.model ?? bootstrap.prefs.model;
+    if (model) await orchestrator.setModel(model);
+    if (bootstrap.prefs.reasoningEffort) {
+      await orchestrator.setReasoningEffort(bootstrap.prefs.reasoningEffort as any);
+    }
+  } catch (err) {
+    process.stderr.write(`[athena] Failed to authenticate ${bootstrap.initialProvider} provider: ${formatError(err)}\n`);
+  }
 }

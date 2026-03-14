@@ -38,9 +38,12 @@ export class TeamOrchestrator {
   ) {}
 
   startRun(goal: string, budget?: ExperimentBudget): TeamRunRecord {
-    const run = this.teamStore.createTeamRun(this.sessionIdProvider(), goal, budget);
+    return this.startRunForSession(this.sessionIdProvider(), goal, budget);
+  }
+
+  startRunForSession(sessionId: string, goal: string, budget?: ExperimentBudget): TeamRunRecord {
+    const run = this.teamStore.createTeamRun(sessionId, goal, budget);
     this.teamStore.transitionWorkflow(run.id, "ready", "goal accepted for research planning");
-    this.teamStore.transitionWorkflow(run.id, "approved", "operator authorized run startup");
     const activeRun = this.teamStore.transitionWorkflow(run.id, "running", "collection workflow started") ?? run;
     this.graphMemory.upsertNode({
       id: `/research/runs/${run.id}`,
@@ -144,13 +147,13 @@ export class TeamOrchestrator {
     });
     if (run.workflowState === "running") {
       this.teamStore.transitionWorkflow(runId, "evaluating", "collection artifacts prepared for proposal evaluation", {
+        currentStage: "planning",
         metadata: {
           candidateId: pack.candidateId,
         },
       });
     }
     return this.teamStore.updateTeamRun(runId, {
-      currentStage: "planning",
       latestOutput: {
         candidateId: pack.candidateId,
         subgraphNodeCount: subgraph.nodes.length,
@@ -200,6 +203,18 @@ export class TeamOrchestrator {
       targetId: proposalPath,
       relationship: CLAIM_GRAPH_RELATIONSHIPS.planningOutput,
     });
+    this.graphMemory.link({
+      sourceId: proposalPath,
+      targetId: `/research/decisions/${decision.decisionId}`,
+      relationship: CLAIM_GRAPH_RELATIONSHIPS.evaluatedBy,
+    });
+    for (const claimId of enrichedBrief.claimIds) {
+      this.graphMemory.link({
+        sourceId: proposalPath,
+        targetId: claimId.startsWith("/") ? claimId : buildCanonicalClaimPath(claimId),
+        relationship: CLAIM_GRAPH_RELATIONSHIPS.derivedFrom,
+      });
+    }
     const proposalGate = this.teamStore.canAutomateAction(runId, "proposal");
     if (!proposalGate.ok) {
       const blockedRun = this.teamStore.noteAutomationBlock(runId, "proposal", proposalGate.reason);
@@ -207,6 +222,49 @@ export class TeamOrchestrator {
         currentStage: "planning",
         latestOutput: {
           ...(blockedRun?.latestOutput ?? proposalGate.run?.latestOutput ?? {}),
+          proposalId: enrichedBrief.proposalId,
+          proposalStatus: enrichedBrief.status,
+          decisionId: decision.decisionId,
+          decisionType: decision.decisionType,
+        },
+      });
+    }
+    const autonomyPolicy = run.automationPolicy.mode === "fully-autonomous"
+      ? run.automationPolicy.autonomyPolicy
+      : undefined;
+    if (
+      autonomyPolicy?.requireEvidenceFloor !== undefined
+      && claimSupport.evidenceStrength < autonomyPolicy.requireEvidenceFloor
+    ) {
+      const blockedRun = this.teamStore.noteAutomationBlock(
+        runId,
+        "experiment",
+        `proposal evidence floor ${claimSupport.evidenceStrength.toFixed(2)} is below autonomous requirement ${autonomyPolicy.requireEvidenceFloor.toFixed(2)}`,
+      );
+      return this.teamStore.updateTeamRun(runId, {
+        currentStage: "planning",
+        latestOutput: {
+          ...(blockedRun?.latestOutput ?? run.latestOutput ?? {}),
+          proposalId: enrichedBrief.proposalId,
+          proposalStatus: "candidate",
+          decisionId: decision.decisionId,
+          decisionType: decision.decisionType,
+        },
+      });
+    }
+    if (
+      run.automationPolicy.mode === "fully-autonomous"
+      && decision.decisionType !== "trial"
+    ) {
+      const blockedRun = this.teamStore.noteAutomationBlock(
+        runId,
+        "experiment",
+        `proposal decision ${decision.decisionType} does not authorize autonomous experiment execution`,
+      );
+      return this.teamStore.updateTeamRun(runId, {
+        currentStage: "planning",
+        latestOutput: {
+          ...(blockedRun?.latestOutput ?? run.latestOutput ?? {}),
           proposalId: enrichedBrief.proposalId,
           proposalStatus: enrichedBrief.status,
           decisionId: decision.decisionId,
@@ -229,24 +287,12 @@ export class TeamOrchestrator {
       });
     }
     this.teamStore.transitionWorkflow(runId, "running", "proposal approved for experiment execution", {
+      currentStage: "simulation",
       metadata: {
         proposalId: enrichedBrief.proposalId,
       },
     });
-    this.graphMemory.link({
-      sourceId: proposalPath,
-      targetId: `/research/decisions/${decision.decisionId}`,
-      relationship: CLAIM_GRAPH_RELATIONSHIPS.evaluatedBy,
-    });
-    for (const claimId of enrichedBrief.claimIds) {
-      this.graphMemory.link({
-        sourceId: proposalPath,
-        targetId: claimId.startsWith("/") ? claimId : buildCanonicalClaimPath(claimId),
-        relationship: CLAIM_GRAPH_RELATIONSHIPS.derivedFrom,
-      });
-    }
     return this.teamStore.updateTeamRun(runId, {
-      currentStage: "simulation",
       latestOutput: {
         proposalId: enrichedBrief.proposalId,
         proposalStatus: enrichedBrief.status,
@@ -365,17 +411,38 @@ export class TeamOrchestrator {
         experimentId: result.experimentId,
       },
     });
-    const continuationGate = this.teamStore.canAutomateAction(runId, "resume");
+    const continuationAction = decision.decisionType === "revisit" ? "revisit" : "resume";
+    const continuationGate = this.teamStore.canAutomateAction(runId, continuationAction);
     if (!continuationGate.ok) {
-      const blockedRun = this.teamStore.noteAutomationBlock(runId, "resume", continuationGate.reason);
+      const blockedRun = this.teamStore.noteAutomationBlock(runId, continuationAction, continuationGate.reason);
+      if (continuationAction === "revisit") {
+        this.teamStore.transitionWorkflow(runId, "reported", continuationGate.reason, {
+          currentStage: "reporting",
+          metadata: {
+            experimentId: result.experimentId,
+            outcomeStatus: result.outcomeStatus,
+            decisionId: decision.decisionId,
+          },
+        });
+        return this.teamStore.updateTeamRun(runId, {
+          status: "completed",
+          latestOutput: {
+            ...(blockedRun?.latestOutput ?? continuationGate.run?.latestOutput ?? {}),
+            experimentId: result.experimentId,
+            proposalId: result.proposalId,
+            outcomeStatus: result.outcomeStatus,
+            decisionId: decision.decisionId,
+          },
+        });
+      }
       this.teamStore.transitionWorkflow(runId, "failed", continuationGate.reason, {
+        currentStage: "reporting",
         metadata: {
           experimentId: result.experimentId,
           outcomeStatus: result.outcomeStatus,
         },
       });
       return this.teamStore.updateTeamRun(runId, {
-        currentStage: "reporting",
         status: "failed",
         latestOutput: {
           ...(blockedRun?.latestOutput ?? continuationGate.run?.latestOutput ?? {}),
@@ -395,6 +462,7 @@ export class TeamOrchestrator {
           ? "simulation failed during workflow execution"
           : "evaluation completed and report is ready",
       {
+        currentStage: "reporting",
         metadata: {
           experimentId: result.experimentId,
           outcomeStatus: result.outcomeStatus,
@@ -403,7 +471,6 @@ export class TeamOrchestrator {
       },
     );
     return this.teamStore.updateTeamRun(runId, {
-      currentStage: "reporting",
       status: nextStatus,
       latestOutput: {
         experimentId: result.experimentId,

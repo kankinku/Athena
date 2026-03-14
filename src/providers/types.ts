@@ -83,9 +83,22 @@ export interface ToolDefinition {
 
 // --- Provider Interface ---
 
+export type ProviderAuthMode = "api_key" | "oauth" | "cli";
+export type AttachmentSupport = "none" | "images-only" | "full" | "auth-mode-dependent";
+export type SessionPersistence = "local" | "provider" | "hybrid";
+
+export interface ProviderCapabilities {
+  attachmentSupport: AttachmentSupport;
+  builtinWebSearch: boolean;
+  authModes: readonly ProviderAuthMode[];
+  sessionPersistence: SessionPersistence;
+  notes?: string[];
+}
+
 export interface ModelProvider {
   readonly name: "claude" | "openai";
   readonly displayName: string;
+  readonly capabilities: ProviderCapabilities;
 
   /** Check if the provider is authenticated */
   isAuthenticated(): Promise<boolean>;

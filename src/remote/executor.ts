@@ -15,11 +15,11 @@ export class RemoteExecutor {
     command: string,
     timeoutMs?: number,
   ): Promise<ExecResult> {
-    if (timeoutMs) {
+    if (timeoutMs && machineId !== "local") {
       const wrappedCmd = `timeout ${Math.ceil(timeoutMs / 1000)} ${command}`;
       return this.pool.exec(machineId, wrappedCmd);
     }
-    return this.pool.exec(machineId, command);
+    return this.pool.exec(machineId, command, timeoutMs);
   }
 
   async execBackground(
@@ -59,6 +59,10 @@ export class RemoteExecutor {
     lines = 50,
   ): Promise<string> {
     return this.pool.tailFile(machineId, path, lines);
+  }
+
+  async readExitCode(machineId: string, logPath: string): Promise<number | null> {
+    return this.pool.readBackgroundExitCode(machineId, logPath);
   }
 
   async gpuStatus(machineId: string): Promise<string> {

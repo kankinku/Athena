@@ -1,14 +1,37 @@
-import { exec as execCb } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
+import { statSync } from "node:fs";
 import { promisify } from "node:util";
 import type { RemoteMachine } from "./types.js";
+import { commandExists } from "./local-runtime.js";
+import type { SecurityManager } from "../security/policy.js";
 
-const execAsync = promisify(execCb);
+const execFileAsync = promisify(execFileCb);
+
+export async function resolveFileSyncTransport(
+  platform = process.platform,
+  exists: (command: string, platform?: NodeJS.Platform) => Promise<boolean> = commandExists,
+): Promise<"rsync" | "scp"> {
+  if (await exists("rsync", platform)) {
+    return "rsync";
+  }
+  if (platform === "win32" && await exists("scp", platform)) {
+    return "scp";
+  }
+  if (platform === "win32") {
+    throw new Error(
+      "Remote sync requires `rsync`, or `scp` via the Windows OpenSSH client when rsync is unavailable.",
+    );
+  }
+  throw new Error("Remote sync requires `rsync` on this platform.");
+}
 
 /**
  * File sync via rsync/SCP over SSH.
  */
 export class FileSync {
   private machines = new Map<string, RemoteMachine>();
+
+  constructor(private securityManager?: SecurityManager) {}
 
   addMachine(machine: RemoteMachine): void {
     this.machines.set(machine.id, machine);
@@ -22,12 +45,27 @@ export class FileSync {
     localPath: string,
     remotePath: string,
   ): Promise<void> {
+    this.securityManager?.assertPathAllowed(localPath, "read");
+    this.securityManager?.assertPathAllowed(remotePath, "write");
+
     const machine = this.getMachine(machineId);
-    const sshArgs = this.buildSshArgs(machine);
+    const transport = await resolveFileSyncTransport();
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
-    await execAsync(
-      `rsync -avz -e "ssh ${sshArgs}" ${localPath} ${remote}`,
+    if (transport === "rsync") {
+      await execFileAsync(
+        "rsync",
+        ["-avz", "-e", this.buildRsyncSshCommand(machine), localPath, remote],
+        { windowsHide: true },
+      );
+      return;
+    }
+
+    const recursive = statSync(localPath).isDirectory();
+    await execFileAsync(
+      "scp",
+      [...this.buildScpArgs(machine), ...(recursive ? ["-r"] : []), localPath, remote],
+      { windowsHide: true },
     );
   }
 
@@ -39,12 +77,26 @@ export class FileSync {
     remotePath: string,
     localPath: string,
   ): Promise<void> {
+    this.securityManager?.assertPathAllowed(remotePath, "read");
+    this.securityManager?.assertPathAllowed(localPath, "write");
+
     const machine = this.getMachine(machineId);
-    const sshArgs = this.buildSshArgs(machine);
+    const transport = await resolveFileSyncTransport();
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
-    await execAsync(
-      `rsync -avz -e "ssh ${sshArgs}" ${remote} ${localPath}`,
+    if (transport === "rsync") {
+      await execFileAsync(
+        "rsync",
+        ["-avz", "-e", this.buildRsyncSshCommand(machine), remote, localPath],
+        { windowsHide: true },
+      );
+      return;
+    }
+
+    await execFileAsync(
+      "scp",
+      [...this.buildScpArgs(machine), "-r", remote, localPath],
+      { windowsHide: true },
     );
   }
 
@@ -54,11 +106,19 @@ export class FileSync {
     return machine;
   }
 
-  private buildSshArgs(machine: RemoteMachine): string {
-    const args: string[] = [`-p ${machine.port}`];
+  private buildRsyncSshCommand(machine: RemoteMachine): string {
+    const args: string[] = ["ssh", `-p ${machine.port}`];
     if (machine.authMethod === "key" && machine.keyPath) {
       args.push(`-i ${machine.keyPath}`);
     }
     return args.join(" ");
+  }
+
+  private buildScpArgs(machine: RemoteMachine): string[] {
+    const args = ["-P", String(machine.port)];
+    if (machine.authMethod === "key" && machine.keyPath) {
+      args.push("-i", machine.keyPath);
+    }
+    return args;
   }
 }

@@ -7,7 +7,7 @@ export interface WorkflowTransitionRule {
 
 const VALID_WORKFLOW_TRANSITIONS: Record<ResearchWorkflowState, ResearchWorkflowState[]> = {
   draft: ["ready", "failed", "archived"],
-  ready: ["approved", "draft", "failed", "archived"],
+  ready: ["approved", "running", "draft", "failed", "archived"],
   approved: ["running", "draft", "failed", "archived"],
   running: ["evaluating", "failed", "archived"],
   evaluating: ["reported", "revisit_due", "running", "failed", "archived"],

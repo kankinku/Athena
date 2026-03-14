@@ -50,11 +50,19 @@ export function App({
         await rt.orchestrator.resumeSession(resumeRef.current).catch((err) => {
           process.stderr.write(`Failed to resume session: ${err}\n`);
         });
+        if (rt.orchestrator.currentSession?.id) {
+          await rt.automationManager.recoverSession(rt.orchestrator.currentSession.id).catch((err) => {
+            process.stderr.write(`Failed to recover automation: ${err}\n`);
+          });
+        }
       } else if (continueRef.current) {
         const sessions = rt.orchestrator.sessionStore.listSessions(1);
         if (sessions.length > 0) {
           await rt.orchestrator.resumeSession(sessions[0].id).catch((err) => {
             process.stderr.write(`Failed to continue session: ${err}\n`);
+          });
+          await rt.automationManager.recoverSession(sessions[0].id).catch((err) => {
+            process.stderr.write(`Failed to recover automation: ${err}\n`);
           });
         }
       }

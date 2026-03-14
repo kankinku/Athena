@@ -64,6 +64,62 @@ export class SimulationRunner {
         return { ok: false, reason: `maxConcurrentRuns reached (${runningCount}/${charter.budget.maxConcurrentRuns})` };
       }
     }
+    const parentRun = this.teamStore.listRecentTeamRuns(sessionId, 50).find((candidate) => {
+      const output = candidate.latestOutput as { proposalId?: string } | undefined;
+      return output?.proposalId === charter.proposalId;
+    });
+    const proposal = this.teamStore.listProposalBriefs(sessionId).find((item) => item.proposalId === charter.proposalId);
+    const autonomyPolicy = parentRun?.automationPolicy.mode === "fully-autonomous"
+      ? parentRun.automationPolicy.autonomyPolicy
+      : undefined;
+    if (parentRun?.automationPolicy.mode === "fully-autonomous" && !autonomyPolicy) {
+      return { ok: false, reason: "fully autonomous run is missing an autonomy policy" };
+    }
+    if (autonomyPolicy?.requireRollbackPlan && !charter.rollbackPlan.trim()) {
+      return { ok: false, reason: "fully autonomous experiments require a rollback plan" };
+    }
+    if (
+      autonomyPolicy?.allowedMachineIds?.length
+      && !autonomyPolicy.allowedMachineIds.includes(charter.machineId)
+    ) {
+      return { ok: false, reason: `machine ${charter.machineId} is outside the autonomous machine policy` };
+    }
+    if (
+      autonomyPolicy?.allowedToolFamilies?.length
+      && !autonomyPolicy.allowedToolFamilies.includes(inferCommandToolFamily(charter.command))
+    ) {
+      return { ok: false, reason: "experiment command violates the autonomous tool-family policy" };
+    }
+    if (
+      autonomyPolicy?.maxWallClockMinutes !== undefined
+      && charter.budget.maxWallClockMinutes !== undefined
+      && charter.budget.maxWallClockMinutes > autonomyPolicy.maxWallClockMinutes
+    ) {
+      return { ok: false, reason: "experiment wall clock budget exceeds autonomous policy" };
+    }
+    if (
+      autonomyPolicy?.maxCostUsd !== undefined
+      && charter.budget.maxCostUsd !== undefined
+      && charter.budget.maxCostUsd > autonomyPolicy.maxCostUsd
+    ) {
+      return { ok: false, reason: "experiment cost budget exceeds autonomous policy" };
+    }
+    if (
+      autonomyPolicy
+      && proposal
+      && compareRiskTier(inferProposalRiskTier(proposal), autonomyPolicy.maxRiskTier) > 0
+    ) {
+      return { ok: false, reason: "proposal risk tier exceeds the autonomous risk policy" };
+    }
+    if (
+      parentRun
+      && parentRun.automationPolicy.mode === "fully-autonomous"
+      && parentRun.automationPolicy.maxAutoExperiments > 0
+      && this.teamStore.listRecentSimulationRuns(sessionId, 100)
+        .filter((simulation) => simulation.proposalId === charter.proposalId).length >= parentRun.automationPolicy.maxAutoExperiments
+    ) {
+      return { ok: false, reason: "autonomous experiment cap reached for this proposal" };
+    }
     return { ok: true };
   }
 
@@ -114,6 +170,7 @@ export class SimulationRunner {
       const taskId = `${proc.machineId}:${proc.pid}`;
       this.teamStore.updateSimulationRun(run.id, {
         taskKey: taskId,
+        logPath: proc.logPath,
         status: "running",
       });
 
@@ -284,4 +341,37 @@ export class SimulationRunner {
 
 function nowTimestamp(): number {
   return Date.now();
+}
+
+function inferCommandToolFamily(command: string): string {
+  const token = command.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  if (token.startsWith("python")) return "python";
+  if (token === "node") return "node";
+  if (token === "npm") return "npm";
+  if (token === "pnpm") return "pnpm";
+  if (token === "yarn") return "yarn";
+  if (token === "bash") return "bash";
+  if (token === "sh") return "sh";
+  if (token === "uv") return "uv";
+  return token;
+}
+
+function inferProposalRiskTier(
+  proposal: ReturnType<TeamStore["listProposalBriefs"]>[number],
+): "safe" | "moderate" | "high" {
+  const scoreRisk = proposal.scorecard?.risk;
+  if (scoreRisk !== undefined) {
+    if (scoreRisk >= 0.66) return "high";
+    if (scoreRisk >= 0.36) return "moderate";
+    return "safe";
+  }
+  const lowerRisk = proposal.expectedRisk.toLowerCase();
+  if (/(high|severe|major)/.test(lowerRisk)) return "high";
+  if (/(moderate|medium)/.test(lowerRisk)) return "moderate";
+  return "safe";
+}
+
+function compareRiskTier(left: "safe" | "moderate" | "high", right: "safe" | "moderate" | "high"): number {
+  const order = { safe: 0, moderate: 1, high: 2 };
+  return order[left] - order[right];
 }

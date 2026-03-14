@@ -374,6 +374,12 @@ const migrations: Migration[] = [
         ON improvement_evaluations(session_id, run_id, created_at);
     `,
   },
+  {
+    version: 13,
+    sql: `
+      ALTER TABLE simulation_runs ADD COLUMN log_path TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

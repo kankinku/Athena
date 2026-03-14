@@ -1,0 +1,46 @@
+name: Remote Live Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  remote-live:
+    name: Live SSH remote validation
+    runs-on: ubuntu-latest
+    if: ${{ secrets.ATHENA_TEST_SSH_HOST != '' && secrets.ATHENA_TEST_SSH_USER != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write SSH key
+        if: ${{ secrets.ATHENA_TEST_SSH_KEY != '' }}
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${ATHENA_TEST_SSH_KEY}" > ~/.ssh/athena_test_key
+          chmod 600 ~/.ssh/athena_test_key
+        env:
+          ATHENA_TEST_SSH_KEY: ${{ secrets.ATHENA_TEST_SSH_KEY }}
+
+      - name: Run live remote test
+        shell: bash
+        run: |
+          if [ -f "$HOME/.ssh/athena_test_key" ]; then
+            export ATHENA_TEST_SSH_KEY="$HOME/.ssh/athena_test_key"
+          fi
+          npm run test:remote-live
+        env:
+          ATHENA_TEST_SSH_HOST: ${{ secrets.ATHENA_TEST_SSH_HOST }}
+          ATHENA_TEST_SSH_USER: ${{ secrets.ATHENA_TEST_SSH_USER }}
+          ATHENA_TEST_SSH_PORT: ${{ secrets.ATHENA_TEST_SSH_PORT }}
+          ATHENA_TEST_SSH_MACHINE_ID: ${{ secrets.ATHENA_TEST_SSH_MACHINE_ID }}

@@ -8,9 +8,10 @@
 import { Effect } from "effect";
 import { Command } from "@effect/cli";
 import { exec as cpExec } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, statSync, statfsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { formatBytes, formatError } from "../ui/format.js";
+import { commandExists, getLocalShell, getNullDevice } from "../remote/local-runtime.js";
 
 // ── Formatting helpers ──────────────────────────────────
 
@@ -44,7 +45,7 @@ function detail(msg: string): void {
 /** Run a shell command and return stdout/stderr/exitCode. Never throws. */
 function sh(command: string, timeoutMs = 10_000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    cpExec(command, { timeout: timeoutMs, shell: "/bin/bash" }, (err, stdout, stderr) => {
+    cpExec(command, { timeout: timeoutMs, shell: getLocalShell(), windowsHide: true }, (err, stdout, stderr) => {
       let exitCode = 0;
       if (err) {
         exitCode = typeof err.code === "number" ? err.code : 1;
@@ -52,6 +53,18 @@ function sh(command: string, timeoutMs = 10_000): Promise<{ stdout: string; stde
       resolve({ stdout: stdout ?? "", stderr: stderr ?? "", exitCode });
     });
   });
+}
+
+function findExistingPath(path: string): string {
+  let current = path;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) {
+      return current;
+    }
+    current = parent;
+  }
+  return current;
 }
 
 // ── Section: Auth ───────────────────────────────────────
@@ -150,6 +163,8 @@ async function checkMachines(): Promise<void> {
 }
 
 async function checkMachineDetails(pool: { exec(id: string, cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> }, id: string): Promise<void> {
+  const isLocalWindows = id === "local" && process.platform === "win32";
+  const nullDevice = getNullDevice(isLocalWindows ? "win32" : process.platform);
   // Detect if the machine is macOS
   const isMac = id === "local"
     ? process.platform === "darwin"
@@ -161,12 +176,24 @@ async function checkMachineDetails(pool: { exec(id: string, cmd: string): Promis
   // Run GPU, Python, CUDA checks in parallel
   const gpuCmd = isMac
     ? "system_profiler SPDisplaysDataType 2>/dev/null"
-    : "nvidia-smi --query-gpu=name,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null";
+    : isLocalWindows
+      ? `nvidia-smi --query-gpu=name,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>${nullDevice}`
+      : "nvidia-smi --query-gpu=name,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null";
+
+  const pythonCmd = isLocalWindows
+    ? `python --version 2>${nullDevice} || py -3 --version 2>${nullDevice}`
+    : "python3 --version 2>/dev/null || python --version 2>/dev/null";
+
+  const cudaCmd = isMac
+    ? null
+    : isLocalWindows
+      ? `nvcc --version 2>${nullDevice}`
+      : "nvcc --version 2>/dev/null | grep -i release";
 
   const [gpuResult, pyResult, cudaResult] = await Promise.all([
     pool.exec(id, gpuCmd).catch(() => null),
-    pool.exec(id, "python3 --version 2>/dev/null || python --version 2>/dev/null").catch(() => null),
-    isMac ? null : pool.exec(id, "nvcc --version 2>/dev/null | grep -i release").catch(() => null),
+    pool.exec(id, pythonCmd).catch(() => null),
+    cudaCmd ? pool.exec(id, cudaCmd).catch(() => null) : null,
   ]);
 
   // GPU info
@@ -289,22 +316,14 @@ async function checkStorage(): Promise<void> {
 
     // Disk space
     try {
-      const dfResult = await sh(`df -h "${ATHENA_DIR}" 2>/dev/null | tail -1`);
-      if (dfResult.exitCode === 0 && dfResult.stdout.trim()) {
-        const parts = dfResult.stdout.trim().split(/\s+/);
-        if (parts.length >= 5) {
-          const size = parts[1];
-          const used = parts[2];
-          const avail = parts[3];
-          const pct = parts[4];
-          pass(`Disk: ${used} used / ${size} total (${pct}), ${avail} available`);
-        } else {
-          warn("Disk: could not parse df output");
-        }
-      } else {
-        warn("Disk: could not check disk space");
-      }
-    } catch {
+      const stats = statfsSync(findExistingPath(ATHENA_DIR));
+      const total = Number(stats.blocks) * Number(stats.bsize);
+      const available = Number(stats.bavail) * Number(stats.bsize);
+      const used = total - available;
+      const pct = total > 0 ? `${Math.round((used / total) * 100)}%` : "n/a";
+      pass(`Disk: ${formatBytes(used)} used / ${formatBytes(total)} total (${pct}), ${formatBytes(available)} available`);
+    } catch (e) {
+      detail(formatError(e));
       warn("Disk: could not check disk space");
     }
   } catch (e) {
@@ -357,28 +376,39 @@ async function checkProject(): Promise<void> {
 async function checkDependencies(): Promise<void> {
   heading("Dependencies");
 
-  const deps = ["ssh", "rsync", "git"];
+  const [sshFound, gitFound, rsyncFound, scpFound] = await Promise.all([
+    commandExists("ssh"),
+    commandExists("git"),
+    commandExists("rsync"),
+    process.platform === "win32" ? commandExists("scp") : Promise.resolve(false),
+  ]);
 
-  // Check all dependencies in parallel
-  const results = await Promise.all(
-    deps.map(async (dep) => {
-      try {
-        const result = await sh(`which ${dep} 2>/dev/null`);
-        return { dep, found: result.exitCode === 0 && !!result.stdout.trim() };
-      } catch {
-        return { dep, found: false, error: true };
-      }
-    }),
-  );
+  if (sshFound) {
+    pass("ssh: available");
+  } else {
+    fail("ssh: not found");
+  }
 
-  for (const { dep, found, error } of results as { dep: string; found: boolean; error?: boolean }[]) {
-    if (error) {
-      fail(`${dep}: could not check`);
-    } else if (found) {
-      pass(`${dep}: available`);
-    } else {
-      fail(`${dep}: not found`);
-    }
+  if (gitFound) {
+    pass("git: available");
+  } else {
+    fail("git: not found");
+  }
+
+  if (rsyncFound) {
+    pass("rsync: available");
+    return;
+  }
+
+  if (process.platform === "win32" && scpFound) {
+    warn("rsync: not found (Windows will fall back to scp for remote sync)");
+    pass("scp: available");
+    return;
+  }
+
+  fail("rsync: not found");
+  if (process.platform === "win32") {
+    warn("Install rsync, or enable the OpenSSH client so Athena can use scp as a fallback.");
   }
 }
 

@@ -9,6 +9,7 @@ import {
   type AgentEvent,
   type ReasoningEffort,
   type Attachment,
+  type ProviderCapabilities,
 } from "../types.js";
 import type { AuthManager } from "../auth/auth-manager.js";
 import { TransientError, isTransient, sleep } from "../retry.js";
@@ -52,6 +53,15 @@ type StreamEvent =
 export class OpenAIProvider implements ModelProvider {
   readonly name = "openai" as const;
   readonly displayName = "OpenAI";
+  readonly capabilities: ProviderCapabilities = {
+    attachmentSupport: "full",
+    builtinWebSearch: true,
+    authModes: ["oauth"],
+    sessionPersistence: "local",
+    notes: [
+      "OpenAI conversations are replayed from local history on each request.",
+    ],
+  };
   currentModel: string = DEFAULT_MODEL;
   reasoningEffort: ReasoningEffort = "medium";
 

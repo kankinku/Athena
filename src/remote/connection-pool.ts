@@ -1,7 +1,15 @@
 import { Client } from "ssh2";
 import { exec as cpExec, spawn } from "node:child_process";
-import { readFileSync, openSync, closeSync } from "node:fs";
+import { readFileSync, openSync, closeSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { shellQuote, formatError } from "../ui/format.js";
+import {
+  createTempLogPath,
+  getExitFilePath,
+  getLocalShell,
+  getLocalShellCommand,
+} from "./local-runtime.js";
+import type { SecurityManager } from "../security/policy.js";
 import type {
   RemoteMachine,
   ExecResult,
@@ -30,7 +38,7 @@ export class ConnectionPool {
   private connections = new Map<string, PooledConnection>();
   private machines = new Map<string, RemoteMachine>();
 
-  constructor() {
+  constructor(private securityManager?: SecurityManager) {
     // Always register the local machine
     this.machines.set("local", LOCAL_MACHINE);
     this.connections.set("local", {
@@ -133,9 +141,15 @@ export class ConnectionPool {
     });
   }
 
-  async exec(machineId: string, command: string): Promise<ExecResult> {
+  async exec(
+    machineId: string,
+    command: string,
+    timeoutMs?: number,
+  ): Promise<ExecResult> {
+    this.securityManager?.assertCommandAllowed(command);
+
     if (machineId === "local") {
-      return this.execLocal(command);
+      return this.execLocal(command, timeoutMs);
     }
     const conn = await this.getConnection(machineId);
     conn.lastUsedAt = Date.now();
@@ -165,7 +179,7 @@ export class ConnectionPool {
 
   private execLocal(command: string, timeoutMs = 300_000): Promise<ExecResult> {
     return new Promise((resolve) => {
-      cpExec(command, { maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs, shell: "/bin/bash" }, (err, stdout, stderr) => {
+      cpExec(command, { maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs, shell: getLocalShell(), windowsHide: true }, (err, stdout, stderr) => {
         let exitCode = 0;
         if (err) {
           // err.code can be number (exit code), string (error code like ETIMEDOUT), or null (signal kill)
@@ -192,7 +206,9 @@ export class ConnectionPool {
     command: string,
     logPath?: string,
   ): Promise<{ pid: number; logPath: string }> {
-    const log = logPath ?? `/tmp/athena-${Date.now()}.log`;
+    this.securityManager?.assertCommandAllowed(command);
+
+    const log = logPath ?? createTempLogPath();
 
     if (machineId === "local") {
       return this.execBackgroundLocal(command, log);
@@ -224,12 +240,13 @@ export class ConnectionPool {
 
         // Spawn detached with stdio redirected to log file
         // PYTHONUNBUFFERED ensures Python flushes stdout immediately for live metric capture
-        // Wrap command to write exit code to .exit file for later retrieval
-        const wrappedCommand = `${command}; echo $? > ${logPath}.exit`;
-        const child = spawn("/bin/bash", ["-c", wrappedCommand], {
+        const shell = getLocalShellCommand();
+        const exitPath = getExitFilePath(logPath);
+        const child = spawn(shell.command, [...shell.args, command], {
           detached: true,
           stdio: ["ignore", logFd, logFd],
           env: { ...process.env, PYTHONUNBUFFERED: "1" },
+          windowsHide: true,
         });
 
         const pid = child.pid;
@@ -238,6 +255,19 @@ export class ConnectionPool {
           reject(new Error("Failed to spawn background process"));
           return;
         }
+
+        child.once("exit", (code, signal) => {
+          const exitCode = typeof code === "number"
+            ? code
+            : signal
+              ? 1
+              : 0;
+          try {
+            writeFileSync(exitPath, String(exitCode), "utf8");
+          } catch {
+            // best effort
+          }
+        });
 
         // Fully detach — don't let Node wait for this child
         child.unref();
@@ -257,6 +287,14 @@ export class ConnectionPool {
     machineId: string,
     pid: number,
   ): Promise<boolean> {
+    if (machineId === "local") {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     const result = await this.exec(
       machineId,
       `kill -0 ${pid} 2>/dev/null && echo "running" || echo "stopped"`,
@@ -269,8 +307,32 @@ export class ConnectionPool {
     path: string,
     lines = 50,
   ): Promise<string> {
+    if (machineId === "local") {
+      const content = await readFile(path, "utf8");
+      return content.split(/\r?\n/).slice(-lines).join("\n");
+    }
     const result = await this.exec(machineId, `tail -n ${lines} ${shellQuote(path)}`);
     return result.stdout;
+  }
+
+  async readBackgroundExitCode(machineId: string, logPath: string): Promise<number | null> {
+    const exitPath = getExitFilePath(logPath);
+    if (machineId === "local") {
+      try {
+        const value = await readFile(exitPath, "utf8");
+        const parsed = Number.parseInt(value.trim(), 10);
+        return Number.isNaN(parsed) ? null : parsed;
+      } catch {
+        return null;
+      }
+    }
+
+    const result = await this.exec(
+      machineId,
+      `[ -f ${shellQuote(exitPath)} ] && cat ${shellQuote(exitPath)} || true`,
+    );
+    const parsed = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isNaN(parsed) ? null : parsed;
   }
 
   getStatus(machineId: string): ConnectionStatus {

@@ -71,6 +71,7 @@ export function buildResearchReportInput(
         return [
           `- ${run.id}: mode=${run.automationPolicy.mode}; workflow=${run.workflowState}; status=${run.status}`,
           `  approvals: proposal=${run.automationPolicy.requireProposalApproval}; experiment=${run.automationPolicy.requireExperimentApproval}; revisit=${run.automationPolicy.requireRevisitApproval}`,
+          formatAutonomyPolicy(run.automationPolicy),
           `  retry: ${run.automationState.retryCount}/${run.retryPolicy.maxRetries}; retry_on=${run.retryPolicy.retryOn.join(",") || "n/a"}`,
           `  checkpoint: last=${run.automationState.lastCheckpointAt ?? "n/a"}; next=${run.automationState.nextCheckpointAt ?? "n/a"}; interval_min=${run.checkpointPolicy.intervalMinutes}`,
           `  timeout: at=${run.automationState.timeoutAt ?? "n/a"}; max_run_min=${run.timeoutPolicy.maxRunMinutes}`,
@@ -198,11 +199,18 @@ export function buildResearchReportInput(
   if (ingestion.length > 0) {
     sections.push(
       "## Ingestion Sources",
-        ...ingestion.map(
-          (source) =>
-          `- ${source.sourceId}: ${source.sourceType}; title=${source.title}; status=${source.status}; candidate=${source.extractedCandidateId ?? "n/a"}; claim_count=${source.claimCount ?? 0}; canonical_claim_count=${source.canonicalClaims?.length ?? 0}; linked_proposal_count=${source.linkedProposalCount ?? 0}`,
-        ),
-      );
+      ...ingestion.map((source) => [
+        `- ${source.sourceId}: ${source.sourceType}; title=${source.title}; status=${source.status}; candidate=${source.extractedCandidateId ?? "n/a"}; claim_count=${source.claimCount ?? 0}; canonical_claim_count=${source.canonicalClaims?.length ?? 0}; linked_proposal_count=${source.linkedProposalCount ?? 0}`,
+        source.sourceDigest ? `  digest: ${source.sourceDigest}` : null,
+        source.sourceExcerpt ? `  excerpt: ${source.sourceExcerpt}` : null,
+        source.extractedClaims?.length
+          ? `  extracted_claims: ${source.extractedClaims.slice(0, 3).map((claim) => `${claim.disposition ?? "support"}:${claim.statement}`).join(" | ")}`
+          : null,
+        source.extractedClaims?.length
+          ? `  citations: ${source.extractedClaims.slice(0, 2).flatMap((claim) => (claim.citationSpans ?? []).slice(0, 1).map((span) => `${span.locator ?? "n/a"}:${span.text}`)).join(" | ") || "n/a"}`
+          : null,
+      ].filter(Boolean).join("\n")),
+    );
   }
 
   if (budgetAnomalies.length > 0) {
@@ -308,4 +316,14 @@ function formatMetricMap(metrics: Record<string, unknown>): string {
   const entries = Object.entries(metrics);
   if (entries.length === 0) return "n/a";
   return entries.map(([key, value]) => `${key}=${value}`).join(", ");
+}
+
+function formatAutonomyPolicy(
+  policy: import("./contracts.js").AutomationPolicy,
+): string {
+  if (policy.mode !== "fully-autonomous" || !policy.autonomyPolicy) {
+    return "  autonomy: n/a";
+  }
+
+  return `  autonomy: risk=${policy.autonomyPolicy.maxRiskTier}; retry_cap=${policy.autonomyPolicy.maxRetryCount ?? "n/a"}; wall_min=${policy.autonomyPolicy.maxWallClockMinutes ?? "n/a"}; cost=${policy.autonomyPolicy.maxCostUsd ?? "n/a"}; evidence_floor=${policy.autonomyPolicy.requireEvidenceFloor ?? "n/a"}; rollback=${policy.autonomyPolicy.requireRollbackPlan ?? false}; machines=${policy.autonomyPolicy.allowedMachineIds?.join(",") ?? "n/a"}`;
 }

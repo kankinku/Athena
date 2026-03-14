@@ -1,8 +1,9 @@
 import type { ToolDefinition } from "../providers/types.js";
 import type { ConnectionPool } from "../remote/connection-pool.js";
+import type { SecurityManager } from "../security/policy.js";
 import { shellQuote } from "../ui/format.js";
 
-export function createReadFileTool(pool: ConnectionPool): ToolDefinition {
+export function createReadFileTool(pool: ConnectionPool, securityManager?: SecurityManager): ToolDefinition {
   return {
     name: "read_file",
     description:
@@ -32,6 +33,7 @@ export function createReadFileTool(pool: ConnectionPool): ToolDefinition {
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
+      securityManager?.assertPathAllowed(path, "read");
       const offset = (args.offset as number) ?? 1;
       const limit = (args.limit as number) ?? 200;
 
@@ -57,7 +59,7 @@ export function createReadFileTool(pool: ConnectionPool): ToolDefinition {
   };
 }
 
-export function createWriteFileTool(pool: ConnectionPool): ToolDefinition {
+export function createWriteFileTool(pool: ConnectionPool, securityManager?: SecurityManager): ToolDefinition {
   return {
     name: "write_file",
     description:
@@ -87,6 +89,7 @@ export function createWriteFileTool(pool: ConnectionPool): ToolDefinition {
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
+      securityManager?.assertPathAllowed(path, "write");
       const content = args.content as string;
       const append = (args.append as boolean) ?? false;
 
@@ -118,7 +121,7 @@ export function createWriteFileTool(pool: ConnectionPool): ToolDefinition {
   };
 }
 
-export function createPatchFileTool(pool: ConnectionPool): ToolDefinition {
+export function createPatchFileTool(pool: ConnectionPool, securityManager?: SecurityManager): ToolDefinition {
   return {
     name: "patch_file",
     description:
@@ -148,6 +151,7 @@ export function createPatchFileTool(pool: ConnectionPool): ToolDefinition {
     execute: async (args) => {
       const machineId = args.machine_id as string;
       const path = args.path as string;
+      securityManager?.assertPathAllowed(path, "write");
       const oldStr = args.old_string as string;
       const newStr = args.new_string as string;
 

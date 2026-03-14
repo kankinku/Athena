@@ -21,6 +21,7 @@ import {
   type AgentEvent,
   type ReasoningEffort,
   type Attachment,
+  type ProviderCapabilities,
 } from "../types.js";
 import type { AuthManager } from "../auth/auth-manager.js";
 import { SessionStore } from "../../store/session-store.js";
@@ -69,6 +70,16 @@ type StreamResult =
 export class ClaudeProvider implements ModelProvider {
   readonly name = "claude" as const;
   readonly displayName = "Claude";
+  readonly capabilities: ProviderCapabilities = {
+    attachmentSupport: "auth-mode-dependent",
+    builtinWebSearch: true,
+    authModes: ["cli", "api_key"],
+    sessionPersistence: "hybrid",
+    notes: [
+      "Claude CLI mode does not accept file attachments.",
+      "Claude API mode accepts image and PDF attachments.",
+    ],
+  };
   currentModel: string = DEFAULT_MODEL;
   reasoningEffort: ReasoningEffort = "medium";
 

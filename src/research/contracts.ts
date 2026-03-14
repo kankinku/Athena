@@ -2,7 +2,9 @@ export type TeamStage = "collection" | "planning" | "simulation" | "reporting";
 
 export type TeamRunStatus = "active" | "completed" | "failed" | "cancelled";
 
-export type AutomationMode = "manual" | "assisted" | "supervised-auto" | "overnight-auto";
+export type AutomationMode = "manual" | "assisted" | "supervised-auto" | "overnight-auto" | "fully-autonomous";
+
+export type AutonomyRiskTier = "safe" | "moderate" | "high";
 
 export type ResearchWorkflowState =
   | "draft"
@@ -140,6 +142,23 @@ export interface ExtractedClaim {
   supportTags?: string[];
   contradictionTags?: string[];
   rationaleSpans?: string[];
+  citationSpans?: CitationSpan[];
+  sourceAttributions?: SourceAttribution[];
+  disposition?: "support" | "contradiction" | "mixed";
+}
+
+export interface CitationSpan {
+  text: string;
+  start: number;
+  end: number;
+  locator?: string;
+}
+
+export interface SourceAttribution {
+  sourceId: string;
+  title: string;
+  url?: string;
+  locator?: string;
 }
 
 export interface GraphNodeRecord {
@@ -208,6 +227,10 @@ export interface CanonicalClaim {
   confidence?: number;
   freshnessScore?: number;
   sourceIds: string[];
+  citationSpans?: CitationSpan[];
+  sourceAttributions?: SourceAttribution[];
+  supportCount?: number;
+  contradictionCount?: number;
 }
 
 export interface ProposalBrief {
@@ -330,6 +353,8 @@ export interface IngestionSourceRecord {
   methodTags?: string[];
   extractedClaims?: ExtractedClaim[];
   canonicalClaims?: CanonicalClaim[];
+  sourceDigest?: string;
+  sourceExcerpt?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -378,6 +403,18 @@ export interface AutomationPolicy {
   requireExperimentApproval: boolean;
   requireRevisitApproval: boolean;
   maxAutoExperiments: number;
+  autonomyPolicy?: AutonomousModePolicy;
+}
+
+export interface AutonomousModePolicy {
+  maxRiskTier: AutonomyRiskTier;
+  maxCostUsd?: number;
+  maxWallClockMinutes?: number;
+  maxRetryCount?: number;
+  requireRollbackPlan?: boolean;
+  requireEvidenceFloor?: number;
+  allowedToolFamilies?: string[];
+  allowedMachineIds?: string[];
 }
 
 export interface CheckpointPolicy {
@@ -398,6 +435,7 @@ export interface TimeoutPolicy {
 export interface AutomationRuntimeState {
   retryCount: number;
   resumeCount: number;
+  stageStartedAt?: number;
   lastCheckpointAt?: number;
   lastCheckpointReason?: string;
   timeoutAt?: number;

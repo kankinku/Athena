@@ -82,6 +82,53 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
       updatedAt: 1,
     });
 
+    teamStore.saveIngestionSource(session.id, {
+      sourceId: "source-snapshot",
+      sourceType: "docs",
+      title: "Snapshot ingestion",
+      status: "ingested",
+      claimCount: 2,
+      linkedProposalCount: 1,
+      sourceDigest: "digest-1234",
+      sourceExcerpt: "Measured telemetry shows runtime improved after batching writes.",
+      extractedClaims: [
+        {
+          claimId: "claim-snapshot-1",
+          statement: "Measured telemetry shows runtime improved after batching writes.",
+          confidence: 0.78,
+          freshnessScore: 0.71,
+          sourceId: "source-snapshot",
+          source: "Snapshot ingestion",
+          supportTags: ["latency", "evidence"],
+          contradictionTags: [],
+          disposition: "support",
+          citationSpans: [{ text: "runtime improved after batching writes", start: 26, end: 63, locator: "sentence:1" }],
+          sourceAttributions: [{ sourceId: "source-snapshot", title: "Snapshot ingestion", locator: "sentence:1" }],
+        },
+      ],
+      canonicalClaims: [
+        {
+          canonicalClaimId: "claim-snapshot",
+          semanticKey: "runtime-improved",
+          statement: "Measured telemetry shows runtime improved after batching writes.",
+          normalizedStatement: "measured telemetry shows runtime improved after batching writes",
+          sourceClaimIds: ["claim-snapshot-1"],
+          evidenceIds: ["source-snapshot-evidence-1"],
+          supportTags: ["latency", "evidence"],
+          contradictionTags: [],
+          confidence: 0.78,
+          freshnessScore: 0.71,
+          sourceIds: ["source-snapshot"],
+          citationSpans: [{ text: "runtime improved after batching writes", start: 26, end: 63, locator: "sentence:1" }],
+          sourceAttributions: [{ sourceId: "source-snapshot", title: "Snapshot ingestion", locator: "sentence:1" }],
+          supportCount: 1,
+          contradictionCount: 0,
+        },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
     const report = buildResearchReportInput(session.id, teamStore, sessionStore, { transcriptLimit: 10 });
     const expected = normalize(`
 ## Summary
@@ -112,6 +159,12 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
   stop_conditions: loss regresses
   reconsider_conditions: new benchmark appears
 
+## Ingestion Sources
+
+- source-snapshot: docs; title=Snapshot ingestion; status=ingested; candidate=n/a; claim_count=2; canonical_claim_count=1; linked_proposal_count=1
+  extracted_claims: support:Measured telemetry shows runtime improved after batching writes.
+  citations: sentence:1:runtime improved after batching writes
+
 ## Approval Queue
 
 - proposal proposal-snapshot: status=candidate; title=Snapshot Proposal
@@ -128,6 +181,53 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
     `);
 
     assert.equal(normalize(report), expected);
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("buildResearchReportInput includes autonomy policy details for autonomous runs", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-report-autonomy-"));
+  process.env.ATHENA_HOME = home;
+
+  const [{ SessionStore }, { TeamStore }, { closeDb }] = await Promise.all([
+    import("../store/session-store.js"),
+    import("./team-store.js"),
+    import("../store/database.js"),
+  ]);
+
+  try {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+    const run = teamStore.createTeamRun(session.id, "Autonomous reporting");
+
+    teamStore.configureAutomation(run.id, {
+      automationPolicy: {
+        ...run.automationPolicy,
+        mode: "fully-autonomous",
+        requireProposalApproval: false,
+        requireExperimentApproval: false,
+        requireRevisitApproval: false,
+        autonomyPolicy: {
+          maxRiskTier: "safe",
+          maxRetryCount: 1,
+          maxWallClockMinutes: 45,
+          maxCostUsd: 9,
+          requireEvidenceFloor: 0.75,
+          requireRollbackPlan: true,
+          allowedMachineIds: ["local"],
+        },
+      },
+    });
+
+    const report = buildResearchReportInput(session.id, teamStore, sessionStore, { transcriptLimit: 10 });
+
+    assert.match(report, /## Automation Status/);
+    assert.match(report, /mode=fully-autonomous/);
+    assert.match(report, /autonomy: risk=safe; retry_cap=1; wall_min=45; cost=9; evidence_floor=0\.75; rollback=true; machines=local/);
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

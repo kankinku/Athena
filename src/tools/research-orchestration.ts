@@ -3,6 +3,8 @@ import type { GraphMemory } from "../memory/graph-memory.js";
 import type { TeamOrchestrator } from "../research/team-orchestrator.js";
 import type { SimulationRunner } from "../research/simulation-runner.js";
 import type { TeamStore } from "../research/team-store.js";
+import type { IngestionService } from "../research/ingestion-service.js";
+import type { ResearchAutomationManager } from "../research/automation-manager.js";
 import type {
   IngestionSourceRecord,
   ExperimentBudget,
@@ -18,9 +20,34 @@ export function createResearchOrchestrationTools(
   teamOrchestrator: TeamOrchestrator,
   simulationRunner: SimulationRunner,
   teamStore: TeamStore,
+  ingestionService: IngestionService,
+  automationManager: ResearchAutomationManager,
   getSessionId: () => string,
 ): ToolDefinition[] {
   return [
+    {
+      name: "team_automation_tick",
+      description:
+        "Process automation checkpoints, timeouts, finished simulations, retries, and recovery for the current or provided session.",
+      parameters: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Optional session ID override" },
+          recover: { type: "boolean", description: "Run startup recovery before processing automation" },
+        },
+      },
+      execute: async (args) => {
+        try {
+          const sessionId = (args.session_id as string | undefined) ?? getSessionId();
+          const runs = args.recover
+            ? await automationManager.recoverSession(sessionId)
+            : await automationManager.tickSession(sessionId);
+          return JSON.stringify({ sessionId, updatedRuns: runs.map((run) => run.id) });
+        } catch (err) {
+          return JSON.stringify({ error: formatError(err) });
+        }
+      },
+    },
     {
       name: "team_start_run",
       description:
@@ -250,6 +277,49 @@ export function createResearchOrchestrationTools(
                 (args.max_nodes as number | undefined) ?? 25,
               );
           return JSON.stringify(subgraph);
+        } catch (err) {
+          return JSON.stringify({ error: formatError(err) });
+        }
+      },
+    },
+    {
+      name: "ingestion_extract_source",
+      description:
+        "Extract claim candidates from a URL, document path, or raw text, then attach them to the current research run.",
+      parameters: {
+        type: "object",
+        properties: {
+          input_type: { type: "string", description: "url|document|text" },
+          value: { type: "string", description: "URL, local file path, or raw text" },
+          problem_area: { type: "string", description: "Research problem area for canonical claim grouping" },
+          title: { type: "string", description: "Optional source title override" },
+          run_id: { type: "string", description: "Optional existing run id to attach ingestion to" },
+          source_type: { type: "string", description: "Optional paper|repo|docs|benchmark|manual override" },
+        },
+        required: ["input_type", "value", "problem_area"],
+      },
+      execute: async (args) => {
+        try {
+          const result = await ingestionService.ingest({
+            inputType: args.input_type as "url" | "document" | "text",
+            value: args.value as string,
+            problemArea: args.problem_area as string,
+            title: args.title as string | undefined,
+            runId: args.run_id as string | undefined,
+            sourceType: args.source_type as IngestionSourceRecord["sourceType"] | undefined,
+            sessionId: getSessionId(),
+          });
+          return JSON.stringify({
+            run: result.run,
+            source: result.source,
+            pack: {
+              candidateId: result.pack.candidateId,
+              claimCount: result.pack.claims.length,
+              canonicalClaimCount: result.pack.canonicalClaims?.length ?? 0,
+              contradictionCount: result.pack.counterEvidence.length,
+              openQuestionCount: result.pack.openQuestions?.length ?? 0,
+            },
+          });
         } catch (err) {
           return JSON.stringify({ error: formatError(err) });
         }

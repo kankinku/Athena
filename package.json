@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:win-exe": "npm run build && node scripts/windows/build-win-exe.mjs",
     "dev": "tsx src/bootstrap.ts",
     "test": "npm run test:research && npm run test:phase5 && npm run test:phase6",
     "test:ci": "npm run test && npm run test:phase7",
@@ -71,6 +72,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.1",
     "@types/asciichart": "^1.5.8",
     "@types/better-sqlite3": "^7.6.12",
     "@types/marked-terminal": "^6.1.1",

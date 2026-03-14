@@ -33,6 +33,8 @@ export class Orchestrator {
   private activeProvider: ModelProvider | null = null;
   private activeSession: Session | null = null;
   private tools: ToolDefinition[] = [];
+  private readonly baseSystemPrompt: string;
+  private responseLanguage: "eng" | "kor" | null = null;
   private _totalCostUsd = 0;
   private _lastInputTokens = 0;
   private _contextGate: ContextGate | null = null;
@@ -45,6 +47,7 @@ export class Orchestrator {
   constructor(config: OrchestratorConfig) {
     this.config = config;
     this.sessionStore = config.sessionStore ?? new SessionStore(config.agentId ?? "");
+    this.baseSystemPrompt = config.systemPrompt;
   }
 
   registerProvider(provider: ModelProvider): void {
@@ -111,7 +114,7 @@ export class Orchestrator {
     }
 
     const sessionConfig: SessionConfig = {
-      systemPrompt: this.config.systemPrompt,
+      systemPrompt: this.getEffectiveSystemPrompt(),
       ...config,
     };
 
@@ -255,6 +258,18 @@ export class Orchestrator {
     return this.activeProvider?.currentModel ?? null;
   }
 
+  get currentLanguage(): "eng" | "kor" | null {
+    return this.responseLanguage;
+  }
+
+  async setResponseLanguage(language: "eng" | "kor" | null): Promise<void> {
+    this.responseLanguage = language;
+    if (this.activeSession && this.activeProvider) {
+      await this.activeProvider.closeSession(this.activeSession).catch(() => {});
+      this.activeSession = null;
+    }
+  }
+
   async setModel(model: string): Promise<void> {
     if (!this.activeProvider) {
       await this.switchProvider(this.config.defaultProvider);
@@ -334,6 +349,13 @@ export class Orchestrator {
     }
 
     return gist;
+  }
+
+  private getEffectiveSystemPrompt(): string {
+    const languageInstruction = this.responseLanguage === "kor"
+      ? "\n\n## Response Language\nRespond in Korean by default. Keep code, commands, file paths, environment variables, and identifiers in their original form unless explicitly asked to translate them."
+      : "";
+    return `${this.baseSystemPrompt}${languageInstruction}`;
   }
 }
 

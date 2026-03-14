@@ -421,6 +421,9 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
     agentId,
     sessionStore,
   });
+  if (prefs.language === "kor" || prefs.language === "eng") {
+    await orch.setResponseLanguage(prefs.language);
+  }
   orch.setContextGate(contextGate);
   orch.setStickyManager(stickies);
   const researchBootstrapper = new ResearchSessionBootstrapper(teamStore, teamOrchestrator);

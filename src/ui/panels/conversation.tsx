@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { C, G, METRIC_COLORS, nameHash } from "../theme.js";
 import { renderMarkdown } from "../markdown.js";
 import { sparkline } from "./metrics-dashboard.js";
-import { truncate, formatMetricValue } from "../format.js";
+import { formatMetricValue, truncate } from "../format.js";
 import type { Message, ToolData } from "../types.js";
 
 interface ConversationPanelProps {
@@ -11,16 +11,15 @@ interface ConversationPanelProps {
   isStreaming: boolean;
 }
 
-export function ConversationPanel({
-  messages,
-  isStreaming,
-}: ConversationPanelProps) {
-  if (messages.length === 0) return null;
+export function ConversationPanel({ messages, isStreaming }: ConversationPanelProps) {
+  if (messages.length === 0) {
+    return null;
+  }
 
   return (
     <Box flexDirection="column" paddingX={1} paddingBottom={1}>
-      {messages.map((msg) => (
-        <MessageLine key={msg.id} message={msg} />
+      {messages.map((message) => (
+        <MessageLine key={message.id} message={message} />
       ))}
       {isStreaming && (
         <Box paddingLeft={2}>
@@ -32,15 +31,13 @@ export function ConversationPanel({
 }
 
 function MessageLine({ message }: { message: Message }) {
-  const { role, content, tool } = message;
-
-  switch (role) {
+  switch (message.role) {
     case "user":
       return (
         <Box marginTop={1}>
           <Text wrap="wrap">
             <Text color={C.primary} bold>{G.active} </Text>
-            <Text color={C.text}>{content}</Text>
+            <Text color={C.text}>{message.content}</Text>
           </Text>
         </Box>
       );
@@ -48,50 +45,50 @@ function MessageLine({ message }: { message: Message }) {
     case "assistant":
       return (
         <Box paddingLeft={2}>
-          <Text wrap="wrap">{renderMarkdown(content)}</Text>
+          <Text wrap="wrap">{renderMarkdown(message.content)}</Text>
         </Box>
       );
 
     case "tool":
-      return tool ? <ToolCallBlock tool={tool} /> : null;
+      return message.tool ? <ToolCallBlock tool={message.tool} /> : null;
 
     case "error":
       return (
         <Box paddingLeft={2}>
-          <Text wrap="wrap" color={C.error}>{G.active} {content}</Text>
+          <Text wrap="wrap" color={C.error}>! {message.content}</Text>
         </Box>
       );
 
     case "system":
       return (
         <Box paddingLeft={2} marginTop={1}>
-          <Text color={C.primary} dimColor wrap="wrap">{content}</Text>
+          <Text color={C.primary} dimColor wrap="wrap">{message.content}</Text>
         </Box>
       );
 
     default:
       return (
         <Box paddingLeft={2}>
-          <Text wrap="wrap">{content}</Text>
+          <Text wrap="wrap">{message.content}</Text>
         </Box>
       );
   }
 }
 
-const PULSE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const PULSE_FRAMES = [".", "..", "..."];
 
 function PulsingIndicator() {
   const [frame, setFrame] = useState(0);
+
   useEffect(() => {
     const timer = setInterval(() => {
-      setFrame((f) => (f + 1) % PULSE_FRAMES.length);
-    }, 80);
+      setFrame((value) => (value + 1) % PULSE_FRAMES.length);
+    }, 120);
     return () => clearInterval(timer);
   }, []);
+
   return <Text color={C.primary}>{PULSE_FRAMES[frame]}</Text>;
 }
-
-// ── Tool call routing ────────────────────────────────────────────────
 
 function ToolCallBlock({ tool }: { tool: ToolData }) {
   switch (tool.name) {
@@ -107,7 +104,7 @@ function ToolCallBlock({ tool }: { tool: ToolData }) {
     case "start_monitor":
       return <MonitorDisplay tool={tool} />;
     case "stop_monitor":
-      return <MonitorStopDisplay tool={tool} />;
+      return <MonitorStopDisplay />;
     case "task_output":
       return <TaskOutputDisplay tool={tool} />;
     case "list_machines":
@@ -121,22 +118,37 @@ function ToolCallBlock({ tool }: { tool: ToolData }) {
   }
 }
 
-// ── Shared helpers ───────────────────────────────────────────────────
-
-function ToolHeader({ icon, label, detail }: { icon: string; label: string; detail?: string }) {
+function ToolHeader({ label, detail }: { label: string; detail?: string }) {
   return (
     <Box>
       <Text wrap="wrap">
-        <Text color={C.primary} dimColor>{"┃ "}</Text>
-        <Text color={C.bright} bold>{icon} {label}</Text>
-        {detail ? <Text color={C.dim}> {detail}</Text> : null}
+        <Text color={C.dim}>[{label}]</Text>
+        {detail ? <Text color={C.text}> {detail}</Text> : null}
       </Text>
     </Box>
   );
 }
 
+function ToolLine({
+  text,
+  color = C.dim,
+}: {
+  text: string;
+  color?: typeof C.dim | typeof C.text | typeof C.error | typeof C.primary | typeof C.success | typeof C.bright;
+}) {
+  return (
+    <Box paddingLeft={2}>
+      <Text color={C.dim}>- </Text>
+      <Text color={color} wrap="wrap">{text}</Text>
+    </Box>
+  );
+}
+
 function parseResult(tool: ToolData): Record<string, unknown> | null {
-  if (!tool.result) return null;
+  if (!tool.result) {
+    return null;
+  }
+
   try {
     return JSON.parse(tool.result);
   } catch {
@@ -144,7 +156,14 @@ function parseResult(tool: ToolData): Record<string, unknown> | null {
   }
 }
 
-// ── remote_exec ──────────────────────────────────────────────────────
+function trimOutput(text: string, maxLines: number): string {
+  const lines = text.trimEnd().split("\n");
+  if (lines.length <= maxLines) {
+    return text.trimEnd();
+  }
+
+  return `... ${lines.length - maxLines} lines hidden ...\n${lines.slice(-maxLines).join("\n")}`;
+}
 
 function ExecDisplay({ tool }: { tool: ToolData }) {
   const machine = (tool.args.machine_id as string) ?? "?";
@@ -153,57 +172,19 @@ function ExecDisplay({ tool }: { tool: ToolData }) {
   const stdout = result?.stdout as string | undefined;
   const stderr = result?.stderr as string | undefined;
   const exitCode = result?.exit_code as number | undefined;
-  const hasOutput = stdout || stderr;
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="$" label={machine} detail={command} />
-      {tool.result && (
-        <Box flexDirection="column" paddingLeft={2}>
-          {stdout ? (
-            <Box>
-              <Text color={C.dim} dimColor>{"┃ "}</Text>
-              <Text color={C.text} wrap="wrap">{trimOutput(stdout, 20)}</Text>
-            </Box>
-          ) : null}
-          {stderr ? (
-            <Box>
-              <Text color={C.dim} dimColor>{"┃ "}</Text>
-              <Text color={C.error} wrap="wrap">{trimOutput(stderr, 5)}</Text>
-            </Box>
-          ) : null}
-          {exitCode !== undefined && exitCode !== 0 ? (
-            <Box>
-              <Text color={C.dim} dimColor>{"┃ "}</Text>
-              <Text color={C.error}>exit {exitCode}</Text>
-            </Box>
-          ) : null}
-          {!hasOutput && exitCode === 0 ? (
-            <Box>
-              <Text color={C.dim} dimColor>{"┃ "}</Text>
-              <Text color={C.dim}>ok</Text>
-            </Box>
-          ) : null}
-        </Box>
-      )}
-      {!tool.result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>running…</Text>
-        </Box>
-      )}
+      <ToolHeader label="exec" detail={`${machine} ${command}`.trim()} />
+      {stdout ? <ToolLine text={trimOutput(stdout, 20)} color={C.text} /> : null}
+      {stderr ? <ToolLine text={trimOutput(stderr, 5)} color={C.error} /> : null}
+      {exitCode !== undefined ? (
+        <ToolLine text={`exit ${exitCode}`} color={exitCode === 0 ? C.dim : C.error} />
+      ) : null}
+      {!tool.result ? <ToolLine text="running..." /> : null}
     </Box>
   );
 }
-
-function trimOutput(text: string, maxLines: number): string {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length <= maxLines) return text.trimEnd();
-  const kept = lines.slice(-maxLines);
-  return `… ${lines.length - maxLines} lines hidden …\n${kept.join("\n")}`;
-}
-
-// ── remote_exec_background ───────────────────────────────────────────
 
 function ExecBackgroundDisplay({ tool }: { tool: ToolData }) {
   const machine = (tool.args.machine_id as string) ?? "?";
@@ -214,51 +195,32 @@ function ExecBackgroundDisplay({ tool }: { tool: ToolData }) {
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="&" label={machine} detail={command} />
-      {result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>pid </Text>
-          <Text color={C.text}>{pid}</Text>
-          {logPath ? (
-            <Text color={C.dim}> → {logPath}</Text>
-          ) : null}
-        </Box>
-      )}
-      {!tool.result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>launching…</Text>
-        </Box>
+      <ToolHeader label="exec-bg" detail={`${machine} ${command}`.trim()} />
+      {result ? (
+        <ToolLine text={`pid ${pid ?? "?"}${logPath ? `  log ${logPath}` : ""}`} />
+      ) : (
+        <ToolLine text="launching..." />
       )}
     </Box>
   );
 }
 
-// ── remote_upload / remote_download ──────────────────────────────────
-
 function FileSyncDisplay({ tool }: { tool: ToolData }) {
-  const isUpload = tool.name === "remote_upload";
-  const icon = isUpload ? "↑" : "↓";
   const machine = (tool.args.machine_id as string) ?? "?";
   const local = (tool.args.local_path as string) ?? "";
   const remote = (tool.args.remote_path as string) ?? "";
-  const label = isUpload ? `${local} → ${machine}:${remote}` : `${machine}:${remote} → ${local}`;
+  const direction =
+    tool.name === "remote_upload"
+      ? `${local} -> ${machine}:${remote}`
+      : `${machine}:${remote} -> ${local}`;
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon={icon} label={tool.name.replace("remote_", "")} detail={label} />
-      {tool.result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={tool.isError ? C.error : C.dim}>{truncate(tool.result, 80)}</Text>
-        </Box>
-      )}
+      <ToolHeader label={tool.name.replace("remote_", "")} detail={direction} />
+      {tool.result ? <ToolLine text={truncate(tool.result, 120)} color={tool.isError ? C.error : C.dim} /> : null}
     </Box>
   );
 }
-
-// ── sleep ────────────────────────────────────────────────────────────
 
 function SleepDisplay({ tool }: { tool: ToolData }) {
   const reason = (tool.args.reason as string) ?? "";
@@ -266,63 +228,34 @@ function SleepDisplay({ tool }: { tool: ToolData }) {
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="◇" label="sleep" detail={truncate(reason, 60)} />
-      {result && !tool.isError && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>
-            session {String(result.session_id ?? "?").slice(0, 8)}
-            {result.deadline ? ` deadline ${String(result.deadline)}` : ""}
-          </Text>
-        </Box>
-      )}
-      {tool.isError && tool.result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.error}>{truncate(tool.result, 80)}</Text>
-        </Box>
-      )}
+      <ToolHeader label="sleep" detail={truncate(reason, 80, true)} />
+      {result && !tool.isError ? (
+        <ToolLine
+          text={`session ${String(result.session_id ?? "?").slice(0, 8)}${result.deadline ? `  deadline ${String(result.deadline)}` : ""}`}
+        />
+      ) : null}
+      {tool.isError && tool.result ? <ToolLine text={truncate(tool.result, 120)} color={C.error} /> : null}
     </Box>
   );
 }
-
-// ── task_output ─────────────────────────────────────────────────────
 
 function TaskOutputDisplay({ tool }: { tool: ToolData }) {
   const machine = (tool.args.machine_id as string) ?? "?";
-  const pid = tool.args.pid as number;
+  const pid = tool.args.pid as number | undefined;
   const result = parseResult(tool);
   const output = result?.output as string | undefined;
   const running = result?.running as boolean | undefined;
+  const status = running === undefined ? undefined : running ? "running" : "stopped";
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader
-        icon="⊳"
-        label={`${machine}:${pid}`}
-        detail={running !== undefined ? (running ? "running" : "stopped") : undefined}
-      />
-      {output ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.text} wrap="wrap">{trimOutput(output, 20)}</Text>
-        </Box>
-      ) : !tool.result ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>fetching…</Text>
-        </Box>
-      ) : result?.error ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.error}>{String(result.error)}</Text>
-        </Box>
-      ) : null}
+      <ToolHeader label="task-output" detail={`${machine}:${pid ?? "?"}${status ? ` ${status}` : ""}`} />
+      {output ? <ToolLine text={trimOutput(output, 20)} color={C.text} /> : null}
+      {!tool.result ? <ToolLine text="fetching..." /> : null}
+      {result?.error ? <ToolLine text={String(result.error)} color={C.error} /> : null}
     </Box>
   );
 }
-
-// ── list_machines ────────────────────────────────────────────────────
 
 function ListMachinesDisplay({ tool }: { tool: ToolData }) {
   const result = parseResult(tool);
@@ -334,28 +267,19 @@ function ListMachinesDisplay({ tool }: { tool: ToolData }) {
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="⊞" label="list_machines" />
-      {machines.length > 0 ? (
-        machines.map((m) => (
-          <Box key={m.id} paddingLeft={2}>
-            <Text color={C.dim} dimColor>{"┃ "}</Text>
-            <Text color={m.connected ? C.primary : C.dim}>
-              {m.connected ? "◆" : "◇"} {m.id}
-            </Text>
-            {m.error ? <Text color={C.error}> {m.error}</Text> : null}
-          </Box>
-        ))
-      ) : !tool.result ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>fetching…</Text>
-        </Box>
-      ) : null}
+      <ToolHeader label="machines" />
+      {machines.length > 0
+        ? machines.map((machine) => (
+            <ToolLine
+              key={machine.id}
+              text={`${machine.connected ? "connected" : "disconnected"} ${machine.id}${machine.error ? `  ${machine.error}` : ""}`}
+              color={machine.connected ? C.success : C.dim}
+            />
+          ))
+        : <ToolLine text={!tool.result ? "fetching..." : "no machines"} />}
     </Box>
   );
 }
-
-// ── show_metrics ────────────────────────────────────────────────────
 
 function ShowMetricsDisplay({ tool }: { tool: ToolData }) {
   const result = parseResult(tool);
@@ -370,79 +294,44 @@ function ShowMetricsDisplay({ tool }: { tool: ToolData }) {
 
   const trendIcon = (trend: string): string => {
     switch (trend) {
-      case "decreasing": return "\u2193"; // ↓
-      case "increasing": return "\u2191"; // ↑
-      case "plateau": return "\u2192";   // →
-      case "unstable": return "~";
-      default: return "?";
+      case "decreasing":
+        return "down";
+      case "increasing":
+        return "up";
+      case "plateau":
+        return "flat";
+      case "unstable":
+        return "unstable";
+      default:
+        return "?";
     }
   };
-
-  const trendColor = (trend: string): string => {
-    switch (trend) {
-      case "decreasing": return C.primary;
-      case "increasing": return C.primary;
-      case "plateau": return C.dim;
-      default: return C.dim;
-    }
-  };
-
-  const formatValue = (v: number | null): string =>
-    v === null ? "\u2014" : formatMetricValue(v);
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="◈" label="show_metrics" />
+      <ToolHeader label="metrics" />
       {metrics.length > 0 ? (
-        metrics.map((m) => {
-          const color = METRIC_COLORS[nameHash(m.name) % METRIC_COLORS.length];
+        metrics.map((metric) => {
+          const color = METRIC_COLORS[nameHash(metric.name) % METRIC_COLORS.length];
+          const latest = metric.latest === null ? "n/a" : formatMetricValue(metric.latest);
+          const min = metric.min === null ? "n/a" : formatMetricValue(metric.min);
+          const max = metric.max === null ? "n/a" : formatMetricValue(metric.max);
           return (
-            <Box key={m.name} flexDirection="column" paddingLeft={2}>
-              <Box>
-                <Text color={C.dim} dimColor>{"\u2503 "}</Text>
-                <Text color={color} bold>{m.name}</Text>
-                {m.values.length > 0 ? (
-                  <Text color={color}>{" "}{sparkline(m.values, 30)}</Text>
-                ) : null}
-              </Box>
-              {m.latest !== null ? (
-                <Box>
-                  <Text color={C.dim} dimColor>{"\u2503 "}</Text>
-                  <Text color={C.text}>
-                    {formatValue(m.latest)}
-                  </Text>
-                  <Text color={C.dim}>
-                    {" "}min {formatValue(m.min)} max {formatValue(m.max)}
-                  </Text>
-                  <Text color={trendColor(m.trend)}>
-                    {" "}{trendIcon(m.trend)} {m.trend}
-                  </Text>
-                </Box>
-              ) : (
-                <Box>
-                  <Text color={C.dim} dimColor>{"\u2503 "}</Text>
-                  <Text color={C.dim}>no data</Text>
-                </Box>
-              )}
+            <Box key={metric.name} paddingLeft={2}>
+              <Text color={C.dim}>- </Text>
+              <Text color={color}>{metric.name}</Text>
+              {metric.values.length > 0 ? <Text color={color}> {sparkline(metric.values, 30)}</Text> : null}
+              <Text color={C.text}> {latest}</Text>
+              <Text color={C.dim}> min {min} max {max} {trendIcon(metric.trend)}</Text>
             </Box>
           );
         })
-      ) : !tool.result ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"\u2503 "}</Text>
-          <Text color={C.dim}>loading...</Text>
-        </Box>
       ) : (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"\u2503 "}</Text>
-          <Text color={C.dim}>no metrics found</Text>
-        </Box>
+        <ToolLine text={!tool.result ? "loading..." : "no metrics found"} />
       )}
     </Box>
   );
 }
-
-// ── start_monitor / stop_monitor ─────────────────────────────────────
 
 function MonitorDisplay({ tool }: { tool: ToolData }) {
   const goal = (tool.args.goal as string) ?? "";
@@ -450,24 +339,19 @@ function MonitorDisplay({ tool }: { tool: ToolData }) {
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="⟳" label="monitor" detail={`every ${interval}m`} />
-      <Box paddingLeft={2}>
-        <Text color={C.dim} dimColor>{"┃ "}</Text>
-        <Text color={C.dim}>{goal}</Text>
-      </Box>
+      <ToolHeader label="monitor" detail={`every ${interval}m`} />
+      <ToolLine text={goal} />
     </Box>
   );
 }
 
-function MonitorStopDisplay(_props: { tool: ToolData }) {
+function MonitorStopDisplay() {
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="⟳" label="monitor stopped" />
+      <ToolHeader label="monitor" detail="stopped" />
     </Box>
   );
 }
-
-// ── compare_runs ────────────────────────────────────────────────────
 
 function CompareRunsDisplay({ tool }: { tool: ToolData }) {
   const taskA = (tool.args.task_a as string) ?? "?";
@@ -481,84 +365,43 @@ function CompareRunsDisplay({ tool }: { tool: ToolData }) {
     direction: string;
   }>;
 
-  const dirIcon = (d: string): string => {
-    switch (d) {
-      case "decreased": return "↓";
-      case "increased": return "↑";
-      case "unchanged": return "→";
-      default: return "?";
-    }
-  };
-
-  const dirColor = (d: string): string => {
-    switch (d) {
-      case "decreased": return C.primary;
-      case "increased": return C.primary;
-      case "unchanged": return C.dim;
-      default: return C.dim;
-    }
-  };
-
-  const fmtVal = (v: number | null): string =>
-    v === null ? "—" : formatMetricValue(v);
-
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="⇄" label="compare" detail={`${taskA} vs ${taskB}`} />
+      <ToolHeader label="compare" detail={`${taskA} vs ${taskB}`} />
       {comparisons.length > 0 ? (
-        comparisons.map((c) => {
-          const color = METRIC_COLORS[nameHash(c.metric) % METRIC_COLORS.length];
+        comparisons.map((comparison) => {
+          const color = METRIC_COLORS[nameHash(comparison.metric) % METRIC_COLORS.length];
+          const baseline = comparison.baseline?.latest ?? null;
+          const experiment = comparison.experiment?.latest ?? null;
+          const delta = comparison.delta;
           return (
-            <Box key={c.metric} paddingLeft={2}>
-              <Text color={C.dim} dimColor>{"┃ "}</Text>
-              <Text color={color}>{c.metric.padEnd(12)}</Text>
-              <Text color={C.dim}>{fmtVal(c.baseline?.latest ?? null)}</Text>
-              <Text color={C.dim}>{" → "}</Text>
-              <Text color={dirColor(c.direction)}>{fmtVal(c.experiment?.latest ?? null)}</Text>
-              {c.delta !== null ? (
-                <Text color={dirColor(c.direction)}>
-                  {" "}{dirIcon(c.direction)} {c.delta > 0 ? "+" : ""}{fmtVal(c.delta)}
-                </Text>
+            <Box key={comparison.metric} paddingLeft={2}>
+              <Text color={C.dim}>- </Text>
+              <Text color={color}>{comparison.metric}</Text>
+              <Text color={C.dim}> {baseline === null ? "n/a" : formatMetricValue(baseline)} {"->"} </Text>
+              <Text color={C.text}>{experiment === null ? "n/a" : formatMetricValue(experiment)}</Text>
+              {delta !== null ? (
+                <Text color={C.dim}> ({comparison.direction} {delta > 0 ? "+" : ""}{formatMetricValue(delta)})</Text>
               ) : null}
             </Box>
           );
         })
-      ) : !tool.result ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.dim}>comparing…</Text>
-        </Box>
-      ) : result?.error ? (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={C.error}>{String(result.error)}</Text>
-        </Box>
-      ) : null}
+      ) : (
+        <ToolLine text={!tool.result ? "comparing..." : result?.error ? String(result.error) : "no comparison data"} color={result?.error ? C.error : C.dim} />
+      )}
     </Box>
   );
 }
 
-// ── Generic fallback ─────────────────────────────────────────────────
-
 function GenericToolDisplay({ tool }: { tool: ToolData }) {
-  const argStr = Object.entries(tool.args)
-    .map(([k, v]) => {
-      const val = typeof v === "string" ? truncate(v, 50) : JSON.stringify(v);
-      return `${k}: ${val}`;
-    })
+  const argText = Object.entries(tool.args)
+    .map(([key, value]) => `${key}: ${typeof value === "string" ? truncate(value, 60) : JSON.stringify(value)}`)
     .join("  ");
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <ToolHeader icon="⚙" label={tool.name} detail={argStr} />
-      {tool.result && (
-        <Box paddingLeft={2}>
-          <Text color={C.dim} dimColor>{"┃ "}</Text>
-          <Text color={tool.isError ? C.error : C.dim} wrap="wrap">
-            {truncate(tool.result, 120)}
-          </Text>
-        </Box>
-      )}
+      <ToolHeader label={tool.name} detail={argText} />
+      {tool.result ? <ToolLine text={truncate(tool.result, 120)} color={tool.isError ? C.error : C.dim} /> : null}
     </Box>
   );
 }

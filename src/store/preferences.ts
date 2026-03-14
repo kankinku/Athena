@@ -10,6 +10,7 @@ export interface Preferences {
   claudeAuthMode?: "cli" | "api";
   model?: string;
   reasoningEffort?: string;
+  language?: "eng" | "kor";
 }
 
 function ensureDir(): void {

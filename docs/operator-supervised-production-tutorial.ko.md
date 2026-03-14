@@ -45,6 +45,89 @@
 3. smoke 검증만 할 때는 임시로 `ANTHROPIC_API_KEY=test-key` 환경변수만 있어도 충분합니다.
 4. `single_remote` 또는 `multi_host`까지 검증하려면 원격 머신을 먼저 구성해야 합니다.
 
+## 인증 방식: 임시 API Key vs GPT Auth
+
+이 튜토리얼에서 나오는 임시 API key 방식과 실제 GPT 인증 방식은 목적이 다릅니다.
+
+구분은 이렇게 보면 됩니다.
+
+- `임시 API key`
+  - 문서에 나온 `ANTHROPIC_API_KEY=test-key` 같은 값
+  - soak/checklist 같은 로컬 검증 흐름을 깨끗한 환경에서 실행할 때 쓰는 편의용 설정
+  - 실제 OpenAI GPT 계정 인증을 대체하는 방식으로 보면 안 됩니다
+- `GPT Auth`
+  - OpenAI 계정으로 브라우저 로그인하는 방식
+  - Athena의 OpenAI 런타임에서 실제 사용 경로는 이쪽입니다
+  - 코드상 OpenAI provider는 OAuth 토큰 기반 인증을 사용합니다
+
+즉, **로컬 smoke나 문서 재현에는 임시 API key가 편할 수 있지만, 실제 GPT 사용 경로를 잡으려면 OpenAI OAuth 로그인으로 가는 것이 맞습니다.**
+
+## GPT Auth로 OpenAI 인증하기
+
+OpenAI 계정으로 Athena를 인증하려면 다음 순서로 진행합니다.
+
+1. OpenAI 로그인 시작
+
+```powershell
+node --import tsx src/bootstrap.ts auth login --provider openai
+```
+
+이 명령은:
+
+- 브라우저를 열거나
+- 브라우저를 열지 못하면 로그인 URL을 출력하고
+- 로컬 callback 포트로 인증 완료를 기다립니다
+
+코드 기준으로 OpenAI OAuth callback은 `localhost:1455`를 사용합니다.
+
+2. 인증 상태 확인
+
+```powershell
+node --import tsx src/bootstrap.ts auth status
+```
+
+정상이라면 OpenAI 쪽 `authenticated`가 `true`로 보여야 합니다.
+
+3. 프로젝트 기본 provider를 OpenAI로 맞추기
+
+```powershell
+node --import tsx src/bootstrap.ts init --provider openai --model gpt-5.4
+```
+
+이미 `athena.json`이 있다면 직접 수정해도 됩니다.
+
+예시:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5.4",
+  "metricNames": ["loss", "acc", "lr"]
+}
+```
+
+4. 이후 Athena 실행
+
+```powershell
+node --import tsx src/bootstrap.ts
+```
+
+또는 원하는 CLI 흐름에 맞춰:
+
+```powershell
+node --import tsx src/bootstrap.ts research soak
+node --import tsx src/bootstrap.ts research checklist
+```
+
+## 언제 어떤 방식을 써야 하나
+
+- 문서 재현, 테스트용 smoke, 격리된 임시 home 검증
+  - 임시 API key 방식이 편합니다
+- 실제로 GPT 계정 인증을 붙여 OpenAI provider를 사용하고 싶을 때
+  - `auth login --provider openai` 방식이 맞습니다
+- 팀이나 운영 환경에서 OpenAI 쪽 실제 계정 인증 상태를 유지하고 싶을 때
+  - `auth login --provider openai` 후 `auth status`로 확인하는 흐름이 안전합니다
+
 ## 토폴로지 규칙
 
 Athena는 감독형 검증에서 세 가지 토폴로지를 평가합니다.
@@ -240,3 +323,70 @@ node --import tsx src/bootstrap.ts research checklist
 결과가 `red`이면 런타임 동작을 고칩니다.
 
 결과가 `green`이면 evidence 문서를 갱신하고 남은 exit gate를 닫으면 됩니다.
+
+## 환경변수 등록
+
+다음은 실제로 자주 쓰는 환경변수를 등록하는 방법입니다.
+
+중요:
+
+- `OpenAI GPT Auth`는 환경변수로 토큰을 넣는 방식이 아니라 `auth login --provider openai`가 기본 경로입니다.
+- 따라서 환경변수 등록은 주로 `ATHENA_HOME`, `ANTHROPIC_API_KEY`, `AGENTHUB_URL`, `AGENTHUB_KEY`에 대해 의미가 있습니다.
+
+### 현재 PowerShell 세션에만 등록
+
+```powershell
+$env:ATHENA_HOME = "C:\Users\hanji\.athena"
+$env:ANTHROPIC_API_KEY = "your-real-key"
+$env:AGENTHUB_URL = "https://your-hub.example.com"
+$env:AGENTHUB_KEY = "your-hub-key"
+```
+
+이 방식은 현재 터미널 창에서만 유효합니다.
+
+### Windows 사용자 환경변수로 영구 등록
+
+```powershell
+[Environment]::SetEnvironmentVariable("ATHENA_HOME", "C:\Users\hanji\.athena", "User")
+[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "your-real-key", "User")
+[Environment]::SetEnvironmentVariable("AGENTHUB_URL", "https://your-hub.example.com", "User")
+[Environment]::SetEnvironmentVariable("AGENTHUB_KEY", "your-hub-key", "User")
+```
+
+등록 후에는 새 PowerShell 창을 다시 열어야 반영됩니다.
+
+### 등록 확인
+
+```powershell
+echo $env:ATHENA_HOME
+echo $env:ANTHROPIC_API_KEY
+echo $env:AGENTHUB_URL
+```
+
+### 삭제
+
+현재 세션에서 제거:
+
+```powershell
+Remove-Item Env:ATHENA_HOME
+Remove-Item Env:ANTHROPIC_API_KEY
+```
+
+사용자 환경변수에서 제거:
+
+```powershell
+[Environment]::SetEnvironmentVariable("ATHENA_HOME", $null, "User")
+[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", $null, "User")
+```
+
+### GPT Auth와의 관계
+
+정리하면:
+
+- Claude 키 기반 실행이나 임시 smoke 검증은 환경변수 방식이 유용합니다.
+- OpenAI GPT 계정 로그인은 환경변수 방식이 아니라 아래 명령으로 처리합니다.
+
+```powershell
+node --import tsx src/bootstrap.ts auth login --provider openai
+node --import tsx src/bootstrap.ts auth status
+```

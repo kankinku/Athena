@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
+import { ConnectionPool } from "./connection-pool.js";
 import {
   getLocalShell,
   getLocalShellCommand,
@@ -99,6 +100,18 @@ test("win32: buildBackgroundExitCommand uses echo %errorlevel%", () => {
   assert.match(cmd, /echo %errorlevel%/);
   assert.match(cmd, /run\.log\.exit/);
   assert.match(cmd, /python train\.py/);
+});
+
+test("win32: connection pool decodes local cmd output without mojibake", async () => {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const pool = new ConnectionPool();
+  const result = await pool.exec("local", 'cmd /d /c "echo 한글"', 10_000);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /한글/);
 });
 
 test("linux: buildBackgroundExitCommand uses printf", () => {

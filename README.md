@@ -549,7 +549,25 @@ npm run test:remote-live  # requires ATHENA_TEST_SSH_* env vars
 npm run test:release
 npm run smoke:research
 npm run build        # tsc
+npm run build:win-exe
 npm start            # node dist/bootstrap.js
+```
+
+### Windows Launcher
+
+For a native Windows launcher that starts Athena without typing `node` each time:
+
+```powershell
+npm run build:win-exe
+.\release\Athena.exe
+```
+
+The launcher needs Node.js 20+. `register-athena-env.ps1` stores the detected `node.exe` path into `ATHENA_NODE` automatically. If detection misses, pass `-AthenaNode "C:\Program Files\nodejs\node.exe"`.
+
+To persist the app root, Athena home, and add the release directory to your user `PATH`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\register-athena-env.ps1
 ```
 
 ## License

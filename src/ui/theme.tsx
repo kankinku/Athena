@@ -1,6 +1,5 @@
 import { Box, Text } from "ink";
 
-// ─── Colors ──────────────────────────────────────────
 export const C = {
   primary: "yellow" as const,
   bright: "yellowBright" as const,
@@ -10,19 +9,17 @@ export const C = {
   success: "green" as const,
 };
 
-// ─── Glyphs ──────────────────────────────────────────
 export const G = {
-  brand: "◈",
-  section: "◈",
-  bullet: "▹",
-  active: "▸",
-  dot: "◆",
-  dotDim: "◇",
-  rule: "━",
-  dash: "╌",
+  brand: "*",
+  section: "*",
+  bullet: "-",
+  active: ">",
+  dot: "*",
+  dotDim: ".",
+  rule: "=",
+  dash: "-",
 };
 
-// ─── Metric Colors ───────────────────────────────────
 export const METRIC_COLORS = [
   "yellowBright",
   "cyanBright",
@@ -48,7 +45,6 @@ function cols(): number {
   return process.stdout.columns || 80;
 }
 
-/** Heavy horizontal rule spanning the terminal */
 export function HRule({ dim = false }: { dim?: boolean }) {
   return (
     <Box>
@@ -58,4 +54,3 @@ export function HRule({ dim = false }: { dim?: boolean }) {
     </Box>
   );
 }
-

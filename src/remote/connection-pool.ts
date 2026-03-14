@@ -34,6 +34,30 @@ interface PooledConnection {
   lastError?: string;
 }
 
+function decodeLocalShellOutput(value: string | Buffer | null | undefined, platform = process.platform): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (platform !== "win32") {
+    return value.toString("utf8");
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch {
+    try {
+      return new TextDecoder("euc-kr").decode(value);
+    } catch {
+      return value.toString("utf8");
+    }
+  }
+}
+
 export class ConnectionPool {
   private connections = new Map<string, PooledConnection>();
   private machines = new Map<string, RemoteMachine>();
@@ -157,7 +181,20 @@ export class ConnectionPool {
 
   private execLocal(command: string, timeoutMs = 300_000): Promise<ExecResult> {
     return new Promise((resolve) => {
-      cpExec(command, { maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs, shell: getLocalShell(), windowsHide: true }, (err, stdout, stderr) => {
+      const normalizedCommand =
+        process.platform === "win32"
+          ? `chcp 65001>nul & ${command}`
+          : command;
+      cpExec(
+        normalizedCommand,
+        {
+          encoding: "buffer",
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: timeoutMs,
+          shell: getLocalShell(),
+          windowsHide: true,
+        },
+        (err, stdout, stderr) => {
         let exitCode = 0;
         if (err) {
           // err.code can be number (exit code), string (error code like ETIMEDOUT), or null (signal kill)
@@ -171,11 +208,12 @@ export class ConnectionPool {
           }
         }
         resolve({
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
+          stdout: decodeLocalShellOutput(stdout),
+          stderr: decodeLocalShellOutput(stderr),
           exitCode,
         });
-      });
+        },
+      );
     });
   }
 

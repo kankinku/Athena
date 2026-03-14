@@ -27,7 +27,8 @@ import {
 import { HubClient } from "../hub/client.js";
 import { createHubTools } from "../tools/hub.js";
 import { buildWriteupSystemPrompt } from "../tools/writeup.js";
-import { formatHelpText } from "./command-registry.js";
+import { formatHelpText, type UiLanguage } from "./command-registry.js";
+import { buildCopyText, copyTextToClipboard } from "./clipboard.js";
 
 export interface CommandContext {
   orchestrator: Orchestrator;
@@ -50,6 +51,10 @@ type CommandHandler = (args: string[], ctx: CommandContext) => Promise<void> | v
 
 let lastSessionListing: SessionSummary[] = [];
 
+function getUiLanguage(ctx: CommandContext): UiLanguage {
+  return ctx.orchestrator.currentLanguage === "kor" ? "kor" : "eng";
+}
+
 export async function handleSlashCommand(
   input: string,
   ctx: CommandContext,
@@ -60,7 +65,12 @@ export async function handleSlashCommand(
 
   const handler = commandHandlers[command];
   if (!handler) {
-    ctx.addMessage("system", `Unknown command: /${command}. Try /help`);
+    ctx.addMessage(
+      "system",
+      getUiLanguage(ctx) === "kor"
+        ? `알 수 없는 명령어입니다: /${command}. /help를 확인하세요.`
+        : `Unknown command: /${command}. Try /help`,
+    );
     return;
   }
 
@@ -121,6 +131,78 @@ const commandHandlers: Record<string, CommandHandler> = {
       },
       (error) => ctx.addMessage("error", `Failed: ${formatError(error)}`),
     );
+  },
+
+  lang: (args, ctx) => {
+    const value = args[0];
+    if (!value || !["kor", "eng", "reset"].includes(value)) {
+      const current = ctx.orchestrator.currentLanguage ?? "eng";
+      ctx.addMessage(
+        "system",
+        getUiLanguage(ctx) === "kor"
+          ? `현재 언어: ${current}\n사용법: /lang <kor|eng|reset>`
+          : `Current language: ${current}\nUsage: /lang <kor|eng|reset>`,
+      );
+      return;
+    }
+
+    const next = value === "reset" ? "eng" : value;
+    ctx.addMessage("system", next === "kor" ? "응답 언어를 한국어로 변경하는 중..." : `Setting response language to ${next}...`);
+    ctx.orchestrator.setResponseLanguage(next === "kor" ? "kor" : "eng").then(
+      () => {
+        savePreferences({ language: next === "kor" ? "kor" : "eng" });
+        ctx.addMessage(
+          "system",
+          next === "kor"
+            ? "언어가 한국어로 설정되었습니다. 이제부터 새 응답은 기본적으로 한국어로 표시됩니다."
+            : "Language reset to English.",
+        );
+      },
+      (error) => ctx.addMessage("error", next === "kor"
+        ? `언어 설정에 실패했습니다: ${formatError(error)}`
+        : `Failed to set language: ${formatError(error)}`),
+    );
+  },
+
+  copy: async (args, ctx) => {
+    const scope = (args[0] ?? "last") as "last" | "all";
+    if (!["last", "all"].includes(scope)) {
+      ctx.addMessage(
+        "system",
+        getUiLanguage(ctx) === "kor"
+          ? "사용법: /copy <last|all>"
+          : "Usage: /copy <last|all>",
+      );
+      return;
+    }
+
+    const text = buildCopyText(ctx.messages, scope);
+    if (!text) {
+      ctx.addMessage(
+        "system",
+        getUiLanguage(ctx) === "kor"
+          ? "복사할 내용이 없습니다."
+          : "Nothing to copy.",
+      );
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(text);
+      ctx.addMessage(
+        "system",
+        getUiLanguage(ctx) === "kor"
+          ? `${scope === "all" ? "전체 대화" : "마지막 응답"}를 plain text로 클립보드에 복사했습니다.`
+          : `Copied ${scope === "all" ? "the full conversation" : "the latest response"} to the clipboard as plain text.`,
+      );
+    } catch (error) {
+      ctx.addMessage(
+        "error",
+        getUiLanguage(ctx) === "kor"
+          ? `클립보드 복사에 실패했습니다: ${formatError(error)}`
+          : `Failed to copy to clipboard: ${formatError(error)}`,
+      );
+    }
   },
 
   models: (_args, ctx) => {
@@ -235,20 +317,26 @@ const commandHandlers: Record<string, CommandHandler> = {
   },
 
   help: (_args, ctx) => {
-    ctx.addMessage("system", formatHelpText());
+    ctx.addMessage("system", formatHelpText(getUiLanguage(ctx)));
   },
 
   status: (_args, ctx) => {
-    ctx.addMessage(
-      "system",
-      [
-        `Provider: ${ctx.orchestrator.currentProvider?.displayName ?? "None"}`,
-        `Model: ${ctx.orchestrator.currentModel ?? "default"}`,
-        `Reasoning: ${ctx.orchestrator.reasoningEffort ?? "medium"}`,
-        `State: ${ctx.orchestrator.currentState}`,
-        `Cost: $${ctx.orchestrator.totalCostUsd.toFixed(4)}`,
-      ].join("\n"),
-    );
+    const language = getUiLanguage(ctx);
+    ctx.addMessage("system", language === "kor"
+      ? [
+          `Provider: ${ctx.orchestrator.currentProvider?.displayName ?? "없음"}`,
+          `모델: ${ctx.orchestrator.currentModel ?? "default"}`,
+          `추론 강도: ${ctx.orchestrator.reasoningEffort ?? "medium"}`,
+          `상태: ${ctx.orchestrator.currentState}`,
+          `비용: $${ctx.orchestrator.totalCostUsd.toFixed(4)}`,
+        ].join("\n")
+      : [
+          `Provider: ${ctx.orchestrator.currentProvider?.displayName ?? "None"}`,
+          `Model: ${ctx.orchestrator.currentModel ?? "default"}`,
+          `Reasoning: ${ctx.orchestrator.reasoningEffort ?? "medium"}`,
+          `State: ${ctx.orchestrator.currentState}`,
+          `Cost: $${ctx.orchestrator.totalCostUsd.toFixed(4)}`,
+        ].join("\n"));
   },
 
   sticky: (args, ctx) => {

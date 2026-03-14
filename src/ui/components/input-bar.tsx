@@ -1,18 +1,20 @@
 import { useState, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { C, G } from "../theme.js";
-import { COMMANDS, type SlashCommand } from "../commands.js";
+import { getCommands, type SlashCommand, type UiLanguage } from "../command-registry.js";
 
 interface InputBarProps {
   onSubmit: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  language?: UiLanguage;
 }
 
 export function InputBar({
   onSubmit,
   disabled = false,
   placeholder = "send a message...",
+  language = "eng",
 }: InputBarProps) {
   const [value, setValue] = useState("");
   const [cursorPos, setCursorPos] = useState(0);
@@ -23,12 +25,13 @@ export function InputBar({
   const isCommandMode = value.startsWith("/");
   const commandQuery = isCommandMode ? value.slice(1).split(" ")[0] : "";
   const hasArgs = isCommandMode && value.includes(" ");
+  const commands = useMemo(() => getCommands(language), [language]);
 
   const filteredCommands = useMemo(() => {
     if (!isCommandMode || hasArgs) return [];
-    if (commandQuery === "") return COMMANDS;
-    return COMMANDS.filter((cmd) => cmd.name.startsWith(commandQuery));
-  }, [isCommandMode, commandQuery, hasArgs]);
+    if (commandQuery === "") return commands;
+    return commands.filter((cmd) => cmd.name.startsWith(commandQuery));
+  }, [isCommandMode, commandQuery, hasArgs, commands]);
 
   const showMenu = isCommandMode && !hasArgs && filteredCommands.length > 0;
 
@@ -66,13 +69,11 @@ export function InputBar({
       return;
     }
 
-    // Left arrow
     if (key.leftArrow) {
       setCursorPos((prev) => Math.max(0, prev - 1));
       return;
     }
 
-    // Right arrow
     if (key.rightArrow) {
       setCursorPos((prev) => Math.min(value.length, prev + 1));
       return;
@@ -80,9 +81,7 @@ export function InputBar({
 
     if (key.upArrow) {
       if (showMenu) {
-        setSelectedIdx((prev) =>
-          prev > 0 ? prev - 1 : filteredCommands.length - 1,
-        );
+        setSelectedIdx((prev) => (prev > 0 ? prev - 1 : filteredCommands.length - 1));
       } else if (history.length > 0) {
         const newIdx = Math.min(historyIdx + 1, history.length - 1);
         setHistoryIdx(newIdx);
@@ -94,44 +93,36 @@ export function InputBar({
 
     if (key.downArrow) {
       if (showMenu) {
-        setSelectedIdx((prev) =>
-          prev < filteredCommands.length - 1 ? prev + 1 : 0,
-        );
+        setSelectedIdx((prev) => (prev < filteredCommands.length - 1 ? prev + 1 : 0));
+      } else if (historyIdx <= 0) {
+        setHistoryIdx(-1);
+        setValue("");
+        setCursorPos(0);
       } else {
-        if (historyIdx <= 0) {
-          setHistoryIdx(-1);
-          setValue("");
-          setCursorPos(0);
-        } else {
-          const newIdx = historyIdx - 1;
-          setHistoryIdx(newIdx);
-          setValue(history[newIdx]);
-          setCursorPos(history[newIdx].length);
-        }
+        const newIdx = historyIdx - 1;
+        setHistoryIdx(newIdx);
+        setValue(history[newIdx]);
+        setCursorPos(history[newIdx].length);
       }
       return;
     }
 
-    // Home / Ctrl+A
     if (key.ctrl && input === "a") {
       setCursorPos(0);
       return;
     }
 
-    // End / Ctrl+E
     if (key.ctrl && input === "e") {
       setCursorPos(value.length);
       return;
     }
 
-    // Ctrl+U — clear line
     if (key.ctrl && input === "u") {
       setValue("");
       setCursorPos(0);
       return;
     }
 
-    // Ctrl+W — delete word backward
     if (key.ctrl && input === "w") {
       const before = value.slice(0, cursorPos);
       const after = value.slice(cursorPos);
@@ -151,7 +142,6 @@ export function InputBar({
 
   return (
     <Box flexDirection="column">
-      {/* Command autocomplete menu */}
       {showMenu && (
         <Box flexDirection="column" paddingX={1} paddingY={0}>
           {filteredCommands.map((cmd, i) => (
@@ -162,12 +152,13 @@ export function InputBar({
             />
           ))}
           <Text color={C.dim} dimColor>
-            {"  "}↑↓ navigate{"  "}tab complete{"  "}enter run
+            {language === "kor"
+              ? "  ↑↓ 이동  Tab 완성  Enter 실행"
+              : "  ↑↓ navigate  Tab complete  Enter run"}
           </Text>
         </Box>
       )}
 
-      {/* Input line */}
       <Box paddingX={1}>
         <Text color={C.primary} bold>
           {G.active}{" "}
@@ -176,7 +167,7 @@ export function InputBar({
           <CursorText text={value} cursorPos={cursorPos} />
         ) : (
           <Text color={C.dim} dimColor>
-            {disabled ? "waiting..." : placeholder}
+            {disabled ? (language === "kor" ? "대기 중..." : "waiting...") : placeholder}
           </Text>
         )}
       </Box>

@@ -40,6 +40,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     agentName,
     securityManager,
   } = runtime;
+  const uiLanguage = orchestrator.currentLanguage === "kor" ? "kor" : "eng";
   const { exit } = useApp();
   const scrollRef = useRef<ScrollViewRef>(null);
   const [userScrolled, setUserScrolled] = useState(false);
@@ -272,7 +273,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
               <Text color={C.dim}>autonomous ml research</Text>
               <Text color={C.dim} dimColor>v{VERSION}</Text>
               <Text color={C.dim} dimColor>{""}</Text>
-              <Text color={C.dim} dimColor>/help for commands</Text>
+              <Text color={C.dim} dimColor>{uiLanguage === "kor" ? "/help로 명령어 보기" : "/help for commands"}</Text>
               {updateAvailable && (
                 <Box marginTop={1}>
                   <Text color={C.bright}>update available: v{updateAvailable} - npm i -g athena</Text>
@@ -301,7 +302,10 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
           <InputBar
             onSubmit={handleSubmit}
             disabled={isStreaming}
-            placeholder={isSleeping ? "type to wake agent..." : "send a message... (/help for commands)"}
+            placeholder={isSleeping
+              ? (uiLanguage === "kor" ? "입력하면 에이전트를 깨웁니다..." : "type to wake agent...")
+              : (uiLanguage === "kor" ? "메시지를 입력하세요... (/help로 명령어 보기)" : "send a message... (/help for commands)")}
+            language={uiLanguage}
           />
         </Box>
       )}

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Message } from "./types.js";
+import { setClipboardWriterForTest } from "./clipboard.js";
 
 const athenaHome = mkdtempSync(join(tmpdir(), "athena-commands-"));
 process.env.ATHENA_HOME = athenaHome;
@@ -23,11 +24,13 @@ function createBaseContext(overrides: Record<string, unknown> = {}) {
     orchestrator: {
       switchProvider: async () => undefined,
       setModel: async () => undefined,
+      setResponseLanguage: async () => undefined,
       fetchModels: async () => [],
       setReasoningEffort: async () => undefined,
       getProvider: () => null,
       currentModel: "gpt-5.4",
       currentProvider: null,
+      currentLanguage: "eng",
       reasoningEffort: "medium",
       currentState: "idle",
       totalCostUsd: 0,
@@ -141,6 +144,46 @@ test("handleSlashCommand adds a machine configuration", async () => {
   assert.match(recorded.messages[0]?.content ?? "", /Added machine "gpu"/);
 });
 
+test("handleSlashCommand updates response language to Korean", async () => {
+  const { handleSlashCommand } = await import("./commands.js");
+  let language: string | null = "eng";
+  const { context, recorded } = createBaseContext({
+    orchestrator: {
+      switchProvider: async () => undefined,
+      setModel: async () => undefined,
+      setResponseLanguage: async (value: string | null) => {
+        language = value;
+      },
+      fetchModels: async () => [],
+      setReasoningEffort: async () => undefined,
+      getProvider: () => null,
+      currentModel: "gpt-5.4",
+      currentProvider: null,
+      get currentLanguage() {
+        return language;
+      },
+      reasoningEffort: "medium",
+      currentState: "idle",
+      totalCostUsd: 0,
+      sessionStore: {
+        listSessionSummaries: () => [],
+        getMessages: () => [],
+      },
+      resumeSession: async () => undefined,
+      registerTools: () => undefined,
+    },
+  });
+
+  await handleSlashCommand("/lang kor", context as any);
+  await handleSlashCommand("/help", context as any);
+
+  assert.equal(language, "kor");
+  assert.match(recorded.messages[0]?.content ?? "", /응답 언어를 한국어로 변경하는 중/);
+  assert.match(recorded.messages[1]?.content ?? "", /언어가 한국어로 설정되었습니다/);
+  assert.match(recorded.messages.at(-1)?.content ?? "", /명령어:/);
+  assert.match(recorded.messages.at(-1)?.content ?? "", /사용 가능한 명령어와 키 조합 보기/);
+});
+
 test("handleSlashCommand reports missing hub configuration", async () => {
   const { handleSlashCommand } = await import("./commands.js");
   const { context, recorded } = createBaseContext();
@@ -193,7 +236,29 @@ test("handleSlashCommand streams a writeup through the provider", async () => {
   assert.equal(closed, true);
 });
 
+test("handleSlashCommand copies the latest assistant response to the clipboard", async () => {
+  const { handleSlashCommand } = await import("./commands.js");
+  let copied = "";
+  setClipboardWriterForTest(async (text) => {
+    copied = text;
+  });
+
+  const { context, recorded } = createBaseContext({
+    messages: [
+      { id: 1, role: "assistant", content: "# Title\n\n- one" },
+    ],
+  });
+
+  await handleSlashCommand("/copy last", context as any);
+
+  assert.match(copied, /Title/);
+  assert.match(copied, /- one/);
+  assert.match(recorded.messages.at(-1)?.content ?? "", /클립보드|clipboard/i);
+  setClipboardWriterForTest(null);
+});
+
 test.after(() => {
+  setClipboardWriterForTest(null);
   rmSync(athenaHome, { recursive: true, force: true });
   delete process.env.ATHENA_HOME;
 });

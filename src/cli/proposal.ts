@@ -1,0 +1,198 @@
+/**
+ * `athena proposal <action> [options]` — change proposal management.
+ *
+ * Actions:
+ *   create   Create a new change proposal
+ *   list     List change proposals
+ *   show     Show change proposal details
+ *   impact   Run impact analysis on a proposal
+ *   agree    Approve a proposal for execution
+ *   execute  Start proposal execution
+ *   verify   Run verification pipeline
+ *   rollback Rollback a proposal
+ */
+
+import { Effect, Option } from "effect";
+import { Command, Args, Options } from "@effect/cli";
+import { nanoid } from "nanoid";
+
+const action = Args.text({ name: "action" }).pipe(
+  Args.withDescription("create|list|show|impact|agree|execute|verify|rollback"),
+);
+
+const proposalTarget = Args.text({ name: "target" }).pipe(
+  Args.withDescription("Proposal ID (for show/impact/agree/execute/verify/rollback)"),
+  Args.optional,
+);
+
+const titleOpt = Options.text("title").pipe(
+  Options.withDescription("Proposal title"),
+  Options.optional,
+);
+
+const pathsOpt = Options.text("paths").pipe(
+  Options.withDescription("Comma-separated changed file paths"),
+  Options.optional,
+);
+
+const summaryOpt = Options.text("summary").pipe(
+  Options.withDescription("Proposal summary"),
+  Options.optional,
+);
+
+const stateFilter = Options.text("state").pipe(
+  Options.withDescription("Filter proposals by change_workflow_state"),
+  Options.optional,
+);
+
+const moduleFilter = Options.text("module").pipe(
+  Options.withDescription("Filter proposals by affected module"),
+  Options.optional,
+);
+
+export const proposal = Command.make(
+  "proposal",
+  { action, target: proposalTarget, title: titleOpt, paths: pathsOpt, summary: summaryOpt, state: stateFilter, module: moduleFilter },
+  (opts) =>
+    Effect.promise(async () => {
+      const target = Option.getOrUndefined(opts.target);
+      const title = Option.getOrUndefined(opts.title);
+      const paths = Option.getOrUndefined(opts.paths);
+      const summary = Option.getOrUndefined(opts.summary);
+      const state = Option.getOrUndefined(opts.state);
+      const module_ = Option.getOrUndefined(opts.module);
+
+      switch (opts.action) {
+        case "create": {
+          if (!title) {
+            console.error("--title is required for proposal creation");
+            process.exitCode = 1;
+            return;
+          }
+          const proposalId = `cp_${nanoid(7)}`;
+          const changedPaths = paths?.split(",").map((p) => p.trim()) ?? [];
+
+          console.log(`Change Proposal created: ${proposalId}`);
+          console.log(`  Title: ${title}`);
+          console.log(`  Paths: ${changedPaths.length > 0 ? changedPaths.join(", ") : "(none)"}`);
+          console.log(`  Summary: ${summary ?? "(none)"}`);
+          console.log(`  State: draft`);
+          console.log("");
+          console.log("Next steps:");
+          console.log(`  athena proposal impact ${proposalId}   # Run impact analysis`);
+          console.log(`  athena meeting status ${proposalId}     # Check meeting status`);
+
+          // Impact analysis
+          if (changedPaths.length > 0) {
+            try {
+              const { ImpactAnalyzer } = await import("../impact/impact-analyzer.js");
+              const analyzer = new ImpactAnalyzer();
+              const result = analyzer.analyze(changedPaths);
+
+              console.log("");
+              console.log("Impact Analysis:");
+              console.log(`  Direct:   ${result.directlyAffected.map((m) => m.moduleId).join(", ") || "none"}`);
+              console.log(`  Indirect: ${result.indirectlyAffected.map((m) => m.moduleId).join(", ") || "none"}`);
+              console.log(`  Observer: ${result.observers.map((m) => m.moduleId).join(", ") || "none"}`);
+              console.log(`  Meeting required: ${result.meetingRequired ? "yes" : "no"}`);
+              if (result.meetingRequired) {
+                console.log(`  Reason: ${result.meetingRequiredReason}`);
+              }
+            } catch {
+              console.log("\n(Impact analysis skipped — module registry not available)");
+            }
+          }
+          break;
+        }
+
+        case "list": {
+          console.log("Change Proposals:");
+          console.log(`  (Filters: state=${state ?? "all"}, module=${module_ ?? "all"})`);
+          console.log("  Use 'athena research proposals' for full listing");
+          break;
+        }
+
+        case "show": {
+          if (!target) {
+            console.error("Proposal ID required: athena proposal show <id>");
+            process.exitCode = 1;
+            return;
+          }
+          console.log(`Proposal: ${target}`);
+          console.log("  Use 'athena research proposals' with proposal ID for details");
+          break;
+        }
+
+        case "impact": {
+          if (!target && !paths) {
+            console.error("Provide --paths or a proposal ID: athena proposal impact [id] --paths ...");
+            process.exitCode = 1;
+            return;
+          }
+
+          const changedPaths = paths?.split(",").map((p) => p.trim()) ?? [];
+          if (changedPaths.length === 0) {
+            console.error("No paths specified for impact analysis");
+            process.exitCode = 1;
+            return;
+          }
+
+          try {
+            const { ImpactAnalyzer } = await import("../impact/impact-analyzer.js");
+            const analyzer = new ImpactAnalyzer();
+            const result = analyzer.analyze(changedPaths);
+
+            console.log("Impact Analysis Result:");
+            console.log(`  Changed paths: ${changedPaths.join(", ")}`);
+            console.log("");
+
+            if (result.directlyAffected.length > 0) {
+              console.log("  Direct Impact:");
+              for (const m of result.directlyAffected) {
+                console.log(`    ${m.moduleId} (${m.ownerAgent}) — risk: ${m.riskLevel}`);
+              }
+            }
+            if (result.indirectlyAffected.length > 0) {
+              console.log("  Indirect Impact:");
+              for (const m of result.indirectlyAffected) {
+                console.log(`    ${m.moduleId} (${m.ownerAgent}) — ${m.impactReason}`);
+              }
+            }
+            if (result.observers.length > 0) {
+              console.log("  Observers:");
+              for (const m of result.observers) {
+                console.log(`    ${m.moduleId} (${m.ownerAgent})`);
+              }
+            }
+
+            console.log("");
+            console.log(`  Meeting required: ${result.meetingRequired ? "YES" : "NO"}`);
+            console.log(`  Reason: ${result.meetingRequiredReason}`);
+          } catch (e) {
+            console.error("Impact analysis failed:", (e as Error).message);
+            process.exitCode = 1;
+          }
+          break;
+        }
+
+        case "agree":
+        case "execute":
+        case "verify":
+        case "rollback": {
+          if (!target) {
+            console.error(`Proposal ID required: athena proposal ${opts.action} <id>`);
+            process.exitCode = 1;
+            return;
+          }
+          console.log(`${opts.action}: ${target}`);
+          console.log("  (Runtime orchestration not yet connected — use research CLI for now)");
+          break;
+        }
+
+        default:
+          console.error(`Unknown action: ${opts.action}`);
+          console.error("Valid actions: create, list, show, impact, agree, execute, verify, rollback");
+          process.exitCode = 1;
+      }
+    }),
+);

@@ -45,6 +45,8 @@ import { search } from "./search.js";
 import { exportCmd } from "./export.js";
 import { kill } from "./kill.js";
 import { research } from "./research.js";
+import { proposal } from "./proposal.js";
+import { meeting } from "./meeting.js";
 
 // ── Root command ─────────────────────────────────────────
 
@@ -80,7 +82,7 @@ const athena = Command.make(
       });
     }),
 ).pipe(
-  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, security, search, exportCmd, kill, research]),
+  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, security, search, exportCmd, kill, research, proposal, meeting]),
 );
 
 // ── Launch ───────────────────────────────────────────────

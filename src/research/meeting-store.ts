@@ -434,6 +434,9 @@ export class MeetingStore {
       featureFlags: row.feature_flags_json
         ? (JSON.parse(row.feature_flags_json as string) as string[])
         : [],
+      mergeGates: row.merge_gates_json
+        ? (JSON.parse(row.merge_gates_json as string) as Record<string, string>)
+        : {},
       status: row.status as ExecutionPlanRecord["status"],
       startedAt: (row.started_at as number | null) ?? undefined,
       completedAt: (row.completed_at as number | null) ?? undefined,

@@ -46,6 +46,7 @@ export interface ImpactAnalysisResult {
   nonCodeImpacts: NonCodeImpact[];
   meetingRequired: boolean;
   meetingRequiredReason: string;
+  confidence: number;           // 0.0 ~ 1.0 — 분석 신뢰도
   analyzedAt: number;
   summaryText: string;
 }
@@ -119,6 +120,7 @@ export class ImpactAnalyzer {
       nonCodeImpacts,
       meetingRequired,
       meetingRequiredReason,
+      confidence: this.computeConfidence(normalizedPaths, directModules, changedInterfaces),
       analyzedAt: Date.now(),
       summaryText: this.buildSummaryText(directImpacts, indirectImpacts, observerImpacts),
     };
@@ -405,6 +407,37 @@ export class ImpactAnalyzer {
     }
 
     return parts.join(" | ") || "영향받는 모듈 없음";
+  }
+
+  /**
+   * 분석 신뢰도를 0.0~1.0 범위로 계산한다.
+   * - 모든 경로가 모듈에 매핑되면 높음
+   * - 인터페이스 변경 감지 시 높음
+   * - 매핑되지 않는 경로가 많으면 낮음
+   */
+  private computeConfidence(
+    normalizedPaths: string[],
+    directModules: string[],
+    changedInterfaces: Map<string, string[]>,
+  ): number {
+    if (normalizedPaths.length === 0) return 0;
+
+    // 매핑된 경로 비율 (0.0 ~ 0.6)
+    const mappedPaths = normalizedPaths.filter((fp) =>
+      this.graph.pathPatterns.some(({ pattern }) =>
+        matchesPattern(fp, normalizePath(pattern)),
+      ),
+    );
+    const mappingRatio = mappedPaths.length / normalizedPaths.length;
+    const mappingScore = mappingRatio * 0.6;
+
+    // 직접 모듈 탐지 여부 (0.0 ~ 0.2)
+    const moduleScore = directModules.length > 0 ? 0.2 : 0;
+
+    // 인터페이스 변경 감지 깊이 (0.0 ~ 0.2)
+    const interfaceScore = changedInterfaces.size > 0 ? 0.2 : 0.1;
+
+    return Math.min(1, Math.round((mappingScore + moduleScore + interfaceScore) * 100) / 100);
   }
 }
 

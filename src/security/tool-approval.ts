@@ -70,8 +70,19 @@ const TOOL_RISK_MAP: Record<string, ToolRiskLevel> = {
   "kill_task": "reviewable",
   "clear_metrics": "reviewable",
 
-  // forbidden — 직접 호출 불가
-  // (현재 없음 — forbidden은 security policy에서 차단)
+  // forbidden — 직접 호출 불가, 시스템 파괴/보안 위반 위험
+  "rm_rf": "forbidden",
+  "format_disk": "forbidden",
+  "drop_database": "forbidden",
+  "truncate_table": "forbidden",
+  "disable_security": "forbidden",
+  "override_policy": "forbidden",
+  "raw_sql_exec": "forbidden",
+  "shell_exec_root": "forbidden",
+  "modify_permissions": "forbidden",
+  "delete_backups": "forbidden",
+  "export_credentials": "forbidden",
+  "bypass_approval": "forbidden",
 };
 
 const FAMILY_RISK_MAP: Record<SecurityToolFamily, ToolRiskLevel> = {

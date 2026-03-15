@@ -48,6 +48,7 @@ import { research } from "./research.js";
 import { proposal } from "./proposal.js";
 import { meeting } from "./meeting.js";
 import { dashboard } from "./dashboard.js";
+import { history } from "./history.js";
 
 // ── Root command ─────────────────────────────────────────
 
@@ -83,7 +84,7 @@ const athena = Command.make(
       });
     }),
 ).pipe(
-  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, security, search, exportCmd, kill, research, proposal, meeting, dashboard]),
+  Command.withSubcommands([auth, sessions, watch, replay, report, initCmd, doctor, security, search, exportCmd, kill, research, proposal, meeting, dashboard, history]),
 );
 
 // ── Launch ───────────────────────────────────────────────

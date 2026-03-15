@@ -17,7 +17,7 @@ import { Command, Args, Options } from "@effect/cli";
 import { nanoid } from "nanoid";
 
 const action = Args.text({ name: "action" }).pipe(
-  Args.withDescription("create|list|show|impact|agree|execute|verify|rollback"),
+  Args.withDescription("create|list|show|impact|agree|execute|verify|rollback|force-stop|force-remeeting|override|status"),
 );
 
 const proposalTarget = Args.text({ name: "target" }).pipe(
@@ -184,15 +184,255 @@ export const proposal = Command.make(
             process.exitCode = 1;
             return;
           }
-          console.log(`${opts.action}: ${target}`);
-          console.log("  (Runtime orchestration not yet connected — use research CLI for now)");
+          await handlePipelineAction(opts.action, target);
+          break;
+        }
+
+        case "force-stop": {
+          if (!target) {
+            console.error("Proposal ID required: athena proposal force-stop <id>");
+            process.exitCode = 1;
+            return;
+          }
+          await handleOperatorAction("force-stop", target);
+          break;
+        }
+
+        case "force-remeeting": {
+          if (!target) {
+            console.error("Proposal ID required: athena proposal force-remeeting <id>");
+            process.exitCode = 1;
+            return;
+          }
+          await handleOperatorAction("force-remeeting", target);
+          break;
+        }
+
+        case "override": {
+          if (!target) {
+            console.error("Proposal ID required: athena proposal override <id>");
+            process.exitCode = 1;
+            return;
+          }
+          await handleOperatorAction("override", target);
+          break;
+        }
+
+        case "status": {
+          if (!target) {
+            console.error("Proposal ID required: athena proposal status <id>");
+            process.exitCode = 1;
+            return;
+          }
+          await showPipelineStatus(target);
           break;
         }
 
         default:
           console.error(`Unknown action: ${opts.action}`);
-          console.error("Valid actions: create, list, show, impact, agree, execute, verify, rollback");
+          console.error("Valid actions: create, list, show, impact, agree, execute, verify, rollback, force-stop, force-remeeting, override, status");
           process.exitCode = 1;
       }
     }),
 );
+
+// ─── Pipeline Action Handlers ─────────────────────────────────────────────────
+
+async function handlePipelineAction(
+  action: "agree" | "execute" | "verify" | "rollback",
+  proposalId: string,
+): Promise<void> {
+  const { ChangePipeline } = await import("../research/change-pipeline.js");
+  const { PipelineStore } = await import("../research/pipeline-store.js");
+  const { AuditEventStore } = await import("../research/audit-event-store.js");
+
+  const pipelineStore = new PipelineStore();
+  const auditEventStore = new AuditEventStore();
+  const pipeline = new ChangePipeline({ pipelineStore, auditEventStore });
+
+  const ctx = pipelineStore.load(proposalId);
+  if (!ctx) {
+    console.error(`No active pipeline found for proposal: ${proposalId}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Pipeline ${ctx.pipelineId} — current state: ${ctx.currentState}`);
+
+  switch (action) {
+    case "agree": {
+      const result = pipeline.buildDecisionContract(ctx, {
+        rollbackPlan: "git reset --hard HEAD~1",
+      });
+      console.log(`  → Decision contract: state=${result.currentState}`);
+      break;
+    }
+    case "execute": {
+      const result = pipeline.execute(ctx, {
+        rollbackPlan: "git reset --hard HEAD~1",
+        autoExecute: true,
+      });
+      console.log(`  → Execution: state=${result.currentState}`);
+      break;
+    }
+    case "verify": {
+      const result = pipeline.verify(ctx);
+      console.log(`  → Verification: state=${result.currentState}`);
+      if (result.verificationResult) {
+        console.log(`  → Outcome: ${result.verificationResult.overallOutcome}`);
+      }
+      break;
+    }
+    case "rollback": {
+      await handleOperatorAction("rollback", proposalId);
+      break;
+    }
+  }
+}
+
+// ─── Operator Action Handlers ─────────────────────────────────────────────────
+
+type OperatorAction = "force-stop" | "force-remeeting" | "override" | "rollback";
+
+async function handleOperatorAction(action: OperatorAction, proposalId: string): Promise<void> {
+  const { PipelineStore } = await import("../research/pipeline-store.js");
+  const { AuditEventStore } = await import("../research/audit-event-store.js");
+  const { canTransitionChange } = await import("../research/change-workflow-state.js");
+
+  const pipelineStore = new PipelineStore();
+  const auditStore = new AuditEventStore();
+
+  const ctx = pipelineStore.load(proposalId);
+  if (!ctx) {
+    console.error(`No active pipeline found for proposal: ${proposalId}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const from = ctx.currentState;
+  console.log(`Pipeline ${ctx.pipelineId} — current state: ${from}`);
+
+  switch (action) {
+    case "force-stop": {
+      if (!canTransitionChange(from, "failed")) {
+        console.error(`Cannot force-stop from state: ${from}`);
+        process.exitCode = 1;
+        return;
+      }
+      pipelineStore.updateState(ctx.pipelineId, "failed");
+      auditStore.save({
+        eventId: `evt_${nanoid(8)}`,
+        eventType: "operator_force_stop",
+        proposalId,
+        details: { previousState: from, action: "force-stop" },
+        severity: "warning",
+        timestamp: Date.now(),
+      });
+      console.log(`  ✓ Force-stopped: ${from} → failed`);
+      break;
+    }
+
+    case "force-remeeting": {
+      if (!canTransitionChange(from, "remeeting")) {
+        console.error(`Cannot force-remeeting from state: ${from}`);
+        process.exitCode = 1;
+        return;
+      }
+      pipelineStore.updateState(ctx.pipelineId, "remeeting");
+      auditStore.save({
+        eventId: `evt_${nanoid(8)}`,
+        eventType: "operator_force_remeeting",
+        proposalId,
+        details: { previousState: from, action: "force-remeeting" },
+        severity: "warning",
+        timestamp: Date.now(),
+      });
+      console.log(`  ✓ Force-remeeting: ${from} → remeeting`);
+      break;
+    }
+
+    case "override": {
+      // Override: operator가 agreed 상태를 강제 부여 (on-hold, rejected 등에서)
+      const targetState = "agreed";
+      if (!canTransitionChange(from, targetState) && from !== "on-hold") {
+        console.error(`Cannot override from state: ${from}`);
+        process.exitCode = 1;
+        return;
+      }
+      // on-hold → draft → impact-analyzed → agents-summoned → in-meeting → agreed 은 너무 복잡하므로
+      // operator override는 직접 상태를 설정 (audit trail에 기록)
+      pipelineStore.updateState(ctx.pipelineId, "agreed");
+      auditStore.save({
+        eventId: `evt_${nanoid(8)}`,
+        eventType: "operator_override",
+        proposalId,
+        details: { previousState: from, targetState, action: "override" },
+        severity: "critical",
+        timestamp: Date.now(),
+      });
+      console.log(`  ✓ Operator override: ${from} → agreed (WARNING: bypasses normal workflow)`);
+      break;
+    }
+
+    case "rollback": {
+      if (!canTransitionChange(from, "rolled-back")) {
+        console.error(`Cannot rollback from state: ${from}`);
+        process.exitCode = 1;
+        return;
+      }
+      pipelineStore.updateState(ctx.pipelineId, "rolled-back");
+      auditStore.save({
+        eventId: `evt_${nanoid(8)}`,
+        eventType: "operator_rollback",
+        proposalId,
+        details: { previousState: from, action: "rollback" },
+        severity: "warning",
+        timestamp: Date.now(),
+      });
+      console.log(`  ✓ Rolled back: ${from} → rolled-back`);
+      break;
+    }
+  }
+}
+
+// ─── Pipeline Status ──────────────────────────────────────────────────────────
+
+async function showPipelineStatus(proposalId: string): Promise<void> {
+  const { PipelineStore } = await import("../research/pipeline-store.js");
+  const { AuditEventStore } = await import("../research/audit-event-store.js");
+
+  const pipelineStore = new PipelineStore();
+  const auditStore = new AuditEventStore();
+
+  const ctx = pipelineStore.load(proposalId);
+  if (!ctx) {
+    console.log(`No pipeline found for proposal: ${proposalId}`);
+    return;
+  }
+
+  console.log(`Pipeline: ${ctx.pipelineId}`);
+  console.log(`  Proposal:  ${ctx.proposalId}`);
+  console.log(`  Session:   ${ctx.sessionId}`);
+  console.log(`  State:     ${ctx.currentState}`);
+  console.log(`  Meeting:   ${ctx.meetingId ?? "(none)"}`);
+  console.log("");
+
+  if (ctx.stages.length > 0) {
+    console.log("  Stages:");
+    for (const s of ctx.stages) {
+      const dur = s.startedAt && s.completedAt ? `${s.completedAt - s.startedAt}ms` : "-";
+      console.log(`    ${s.stage.padEnd(14)} ${s.status.padEnd(10)} ${dur}`);
+      if (s.error) console.log(`      error: ${s.error}`);
+    }
+  }
+
+  const events = auditStore.listByProposal(proposalId);
+  if (events.length > 0) {
+    console.log("");
+    console.log("  Recent Audit Events:");
+    for (const ev of events) {
+      const time = new Date(ev.timestamp).toLocaleTimeString();
+      console.log(`    [${time}] ${ev.eventType} (${ev.severity})`);
+    }
+  }
+}

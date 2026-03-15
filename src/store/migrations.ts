@@ -658,6 +658,114 @@ const migrations: Migration[] = [
         ON module_impact_records(proposal_id, created_at);
     `,
   },
+
+  // ─── v0.4.1: Audit Events + Pipeline Persistence ─────────────────────────
+  {
+    version: 21,
+    sql: `
+      -- Audit events for full pipeline traceability
+      CREATE TABLE IF NOT EXISTS audit_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id TEXT,
+        actor TEXT NOT NULL DEFAULT 'system',
+        action TEXT NOT NULL DEFAULT '',
+        proposal_id TEXT,
+        meeting_id TEXT,
+        agent_id TEXT,
+        module_id TEXT,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        severity TEXT NOT NULL DEFAULT 'info',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_events_entity
+        ON audit_events(entity_type, entity_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_audit_events_type
+        ON audit_events(event_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_audit_events_proposal
+        ON audit_events(proposal_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_audit_events_created
+        ON audit_events(created_at);
+
+      -- Pipeline run persistence for resume support
+      CREATE TABLE IF NOT EXISTS pipeline_runs (
+        pipeline_id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        session_id TEXT,
+        current_state TEXT NOT NULL DEFAULT 'draft',
+        current_stage TEXT,
+        meeting_id TEXT,
+        execution_plan_id TEXT,
+        verification_id TEXT,
+        impact_result_json TEXT,
+        stages_json TEXT NOT NULL DEFAULT '[]',
+        options_json TEXT NOT NULL DEFAULT '{}',
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (proposal_id) REFERENCES proposal_briefs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pipeline_runs_proposal
+        ON pipeline_runs(proposal_id, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_pipeline_runs_state
+        ON pipeline_runs(current_state, updated_at);
+    `,
+  },
+
+  // ─── v0.4.2: Interface Contracts + Budget Tracking ────────────────────────
+  {
+    version: 22,
+    sql: `
+      -- Interface contracts for 1st-class interface management
+      CREATE TABLE IF NOT EXISTS interface_contracts (
+        contract_id TEXT PRIMARY KEY,
+        module_id TEXT NOT NULL,
+        interface_name TEXT NOT NULL,
+        interface_type TEXT NOT NULL DEFAULT 'function',
+        source_file TEXT NOT NULL,
+        signature TEXT,
+        dependent_modules_json TEXT NOT NULL DEFAULT '[]',
+        breaking_change_risk TEXT NOT NULL DEFAULT 'low',
+        version TEXT NOT NULL DEFAULT '1.0.0',
+        last_changed_at INTEGER,
+        last_verified_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_interface_contracts_module
+        ON interface_contracts(module_id);
+      CREATE INDEX IF NOT EXISTS idx_interface_contracts_name
+        ON interface_contracts(interface_name);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_interface_contracts_unique
+        ON interface_contracts(module_id, interface_name);
+
+      -- Budget tracking for task execution enforcement
+      CREATE TABLE IF NOT EXISTS budget_tracking (
+        task_id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        module_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        max_wall_clock_minutes INTEGER NOT NULL DEFAULT 60,
+        max_retries INTEGER NOT NULL DEFAULT 3,
+        max_files_changed INTEGER NOT NULL DEFAULT 20,
+        max_cost_usd REAL NOT NULL DEFAULT 10.0,
+        elapsed_minutes REAL NOT NULL DEFAULT 0,
+        retries_used INTEGER NOT NULL DEFAULT 0,
+        files_changed INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        files_changed_list_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        exceeded_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_budget_tracking_proposal
+        ON budget_tracking(proposal_id);
+      CREATE INDEX IF NOT EXISTS idx_budget_tracking_status
+        ON budget_tracking(status);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

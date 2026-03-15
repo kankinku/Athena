@@ -16,7 +16,7 @@ const VALID_CHANGE_TRANSITIONS: Record<ChangeWorkflowState, ChangeWorkflowState[
   "agents-summoned":  ["in-meeting", "failed"],
   "in-meeting":       ["agreed", "on-hold", "rejected", "failed"],
   "agreed":           ["executing", "on-hold", "failed"],
-  "executing":        ["verifying", "rolled-back", "failed"],
+  "executing":        ["verifying", "rolled-back", "remeeting", "failed"],
   "verifying":        ["merged", "completed", "remeeting", "rolled-back", "failed"],
   "merged":           [],                                         // terminal
   "completed":        ["merged"],                                 // can promote to merged
@@ -80,16 +80,18 @@ export function canRollbackToChangeState(target: ChangeWorkflowState): boolean {
 // ─── Meeting State Transitions ────────────────────────────────────────────────
 
 const VALID_MEETING_TRANSITIONS: Record<MeetingState, MeetingState[]> = {
-  "scheduled":       ["pending-quorum", "round-1", "failed"],
-  "pending-quorum":  ["round-1", "on-hold", "failed"],
-  "round-1":         ["round-2", "on-hold", "failed"],
-  "round-2":         ["round-3", "on-hold", "failed"],
-  "round-3":         ["round-4", "round-5", "on-hold", "failed"],  // skip round 4 if no conflicts
-  "round-4":         ["round-5", "on-hold", "failed"],
-  "round-5":         ["completed", "on-hold", "failed"],
+  "scheduled":       ["pending-quorum", "round-1", "cancelled", "failed"],
+  "pending-quorum":  ["round-1", "on-hold", "timed-out", "cancelled", "failed"],
+  "round-1":         ["round-2", "on-hold", "timed-out", "cancelled", "failed"],
+  "round-2":         ["round-3", "on-hold", "timed-out", "cancelled", "failed"],
+  "round-3":         ["round-4", "round-5", "on-hold", "timed-out", "cancelled", "failed"],
+  "round-4":         ["round-5", "on-hold", "timed-out", "cancelled", "failed"],
+  "round-5":         ["completed", "on-hold", "timed-out", "cancelled", "failed"],
   "completed":       ["archived"],
   "archived":        [],                                            // terminal
-  "on-hold":         ["scheduled", "round-1", "failed"],
+  "on-hold":         ["scheduled", "round-1", "cancelled", "failed"],
+  "cancelled":       [],                                            // terminal — 운영자 취소
+  "timed-out":       ["scheduled"],                                  // 재스케줄 가능
   "failed":          ["scheduled"],
 };
 

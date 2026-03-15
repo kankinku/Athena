@@ -19,6 +19,7 @@ export interface ModuleDefinition {
   displayName: string;
   description: string;
   ownerAgent: string;
+  humanOwner: string;
   paths: string[];
   publicInterfaces: string[];
   dependsOn: string[];
@@ -72,6 +73,7 @@ interface RawModule {
   display_name?: string;
   description?: string;
   owner_agent: string;
+  human_owner?: string;
   paths: string[];
   public_interfaces?: string[];
   depends_on?: string[];
@@ -143,6 +145,7 @@ export class GraphBuilder {
         displayName: rawMod.display_name ?? rawMod.module_id,
         description: rawMod.description ?? "",
         ownerAgent: rawMod.owner_agent,
+        humanOwner: rawMod.human_owner ?? "",
         paths: rawMod.paths,
         publicInterfaces: rawMod.public_interfaces ?? [],
         dependsOn: rawMod.depends_on ?? [],
@@ -215,6 +218,13 @@ export class GraphBuilder {
     for (const [, mod] of graph.modules) {
       if (mod.mergeGate && !(mod.mergeGate in graph.mergeGates)) {
         warnings.push(`모듈 '${mod.moduleId}'의 merge_gate '${mod.mergeGate}'가 정의되지 않음`);
+      }
+    }
+
+    // 4. human_owner 필수 검사
+    for (const [, mod] of graph.modules) {
+      if (!mod.humanOwner) {
+        errors.push(`모듈 '${mod.moduleId}'에 human_owner가 정의되지 않음`);
       }
     }
 

@@ -59,15 +59,25 @@ export class PathEnforcer {
   /**
    * 에이전트가 특정 경로에 쓰기를 시도할 때 호출한다.
    * 위반 시 enforce 모드이면 차단, audit 모드이면 기록만.
+   *
+   * @param agentRole - "mandatory" | "conditional" | "observer" — observer는 무조건 차단
    */
   checkWrite(
     agentId: string,
     moduleId: string,
     targetPaths: string[],
     isOperator: boolean = false,
+    agentRole?: "mandatory" | "conditional" | "observer",
   ): PathEnforcementResult {
     const violations: string[] = [];
     const normalizedTargets = targetPaths.map((p) => p.replace(/\\/g, "/"));
+
+    // 0. observer 에이전트는 쓰기 절대 불가
+    if (agentRole === "observer") {
+      for (const target of normalizedTargets) {
+        violations.push(`OBSERVER_BLOCKED: ${target} (observer agents are read-only)`);
+      }
+    }
 
     // 1. 절대 보호 경로 확인
     for (const target of normalizedTargets) {

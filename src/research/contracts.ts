@@ -674,6 +674,8 @@ export type MeetingState =
   | "completed"         // spec: concluded
   | "archived"          // spec: archived
   | "on-hold"
+  | "cancelled"         // 운영자에 의해 취소됨
+  | "timed-out"         // 쿼럼/라운드 시간 초과
   | "failed";
 
 /**
@@ -813,12 +815,34 @@ export interface MeetingFollowUpAction {
 /**
  * 합의 결과로 생성되는 실행 계획.
  */
+export interface ExecutionBudget {
+  maxWallClockMinutes: number;
+  maxRetries: number;
+  maxFilesChanged: number;
+  maxCostUsd: number;
+}
+
+/**
+ * 개별 태스크의 생명주기 상태.
+ */
+export type TaskState =
+  | "queued"            // 실행 대기
+  | "running"           // 에이전트 실행 중
+  | "needs-review"      // 실행 완료, 리뷰 필요
+  | "ready-for-merge"   // 리뷰 통과, 머지 대기
+  | "merged"            // 최종 반영 완료 (terminal)
+  | "policy-blocked"    // 보안/정책 위반으로 차단
+  | "test-failed"       // 테스트 실패
+  | "rolled-back";      // 롤백됨 (terminal)
+
 export interface TaskAssignment {
   agentId: string;
   moduleId: string;
   tasks: string[];
   dependsOnAgents: string[];
   estimatedMinutes?: number;
+  budget?: ExecutionBudget;
+  state?: TaskState;
 }
 
 export interface ExecutionPlanRecord {
@@ -829,6 +853,8 @@ export interface ExecutionPlanRecord {
   requiredTests: string[];
   rollbackPlan: string;
   featureFlags: string[];
+  /** 각 영향 모듈의 merge gate (모듈ID → gate 이름) */
+  mergeGates: Record<string, string>;
   status: "pending" | "in-progress" | "completed" | "failed" | "rolled-back";
   startedAt?: number;
   completedAt?: number;
@@ -918,8 +944,19 @@ export interface InterfaceContract {
   signature?: string;            // 함수 시그니처 또는 타입 요약
   dependentModules: string[];    // 이 인터페이스를 사용하는 모듈
   breakingChangeRisk: "low" | "medium" | "high";
+  version: string;               // semantic version (예: "1.0.0")
   lastChangedAt?: number;
   lastVerifiedAt?: number;
+}
+
+/**
+ * 인터페이스 계약 변경 분석 결과.
+ */
+export interface BreakingChangeResult {
+  isBreaking: boolean;
+  reason: string;
+  affectedConsumers: string[];   // 영향받는 모듈 IDs
+  riskLevel: "low" | "medium" | "high" | "critical";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -31,11 +31,15 @@ import { MeetingOrchestrator } from "./meeting-orchestrator.js";
 import { MeetingStore } from "./meeting-store.js";
 import { ExecutionGate } from "./execution-gate.js";
 import { VerificationPipeline } from "./verification-pipeline.js";
+import { AuditEventStore } from "./audit-event-store.js";
+import { PipelineStore } from "./pipeline-store.js";
+import { BudgetEnforcer } from "./budget-enforcer.js";
 import type { ToolApprovalGate } from "../security/tool-approval.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PipelineContext {
+  pipelineId: string;
   proposalId: string;
   sessionId: string;
   stages: PipelineStageRecord[];
@@ -65,6 +69,9 @@ export class ChangePipeline {
   private executionGate: ExecutionGate;
   private verificationPipeline: VerificationPipeline;
   private toolApprovalGate?: ToolApprovalGate;
+  private auditEventStore: AuditEventStore;
+  private pipelineStore: PipelineStore;
+  private budgetEnforcer: BudgetEnforcer;
 
   constructor(deps?: {
     proposalStore?: ChangeProposalStore;
@@ -74,6 +81,9 @@ export class ChangePipeline {
     executionGate?: ExecutionGate;
     verificationPipeline?: VerificationPipeline;
     toolApprovalGate?: ToolApprovalGate;
+    auditEventStore?: AuditEventStore;
+    pipelineStore?: PipelineStore;
+    budgetEnforcer?: BudgetEnforcer;
   }) {
     this.proposalStore = deps?.proposalStore ?? new ChangeProposalStore();
     this.impactAnalyzer = deps?.impactAnalyzer ?? new ImpactAnalyzer();
@@ -82,6 +92,9 @@ export class ChangePipeline {
     this.executionGate = deps?.executionGate ?? new ExecutionGate();
     this.verificationPipeline = deps?.verificationPipeline ?? new VerificationPipeline();
     this.toolApprovalGate = deps?.toolApprovalGate;
+    this.auditEventStore = deps?.auditEventStore ?? new AuditEventStore();
+    this.pipelineStore = deps?.pipelineStore ?? new PipelineStore();
+    this.budgetEnforcer = deps?.budgetEnforcer ?? new BudgetEnforcer({ auditStore: this.auditEventStore });
   }
 
   /**
@@ -129,9 +142,11 @@ export class ChangePipeline {
         indirectCount: result.indirectlyAffected.length,
         meetingRequired: result.meetingRequired,
       });
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
       this.transition(ctx, "failed");
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -168,9 +183,11 @@ export class ChangePipeline {
         mandatory: summonResult.mandatoryAgents,
         conditional: summonResult.conditionalAgents,
       });
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
       this.transition(ctx, "failed");
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -194,9 +211,11 @@ export class ChangePipeline {
       // 회의 자체는 비동기로 진행됨 — MeetingOrchestrator가 라운드별로 관리
       // 이 단계는 meeting이 completed 될 때까지 대기하는 entry point
       this.completeStage(stage);
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
       this.transition(ctx, "failed");
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -251,8 +270,10 @@ export class ChangePipeline {
       this.audit(ctx, "decision_contract_created", {
         executionPlanId: ctx.executionPlan?.executionPlanId,
       });
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -288,14 +309,30 @@ export class ChangePipeline {
         { startedAt: Date.now() },
       );
 
+      // 각 TaskAssignment에 대해 예산 추적 시작
+      for (const task of ctx.executionPlan.taskAssignments) {
+        if (task.budget) {
+          const taskId = `task_${task.moduleId}_${ctx.pipelineId}`;
+          this.budgetEnforcer.startTracking(
+            taskId,
+            ctx.proposalId,
+            task.moduleId,
+            task.agentId,
+            task.budget,
+          );
+        }
+      }
+
       this.audit(ctx, "execution_started", {
         planId: ctx.executionPlan.executionPlanId,
         taskCount: ctx.executionPlan.taskAssignments.length,
       });
       this.completeStage(stage);
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
       this.transition(ctx, "failed");
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -346,9 +383,11 @@ export class ChangePipeline {
       }
 
       this.completeStage(stage);
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
       this.transition(ctx, "failed");
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -387,8 +426,10 @@ export class ChangePipeline {
         proposalId: ctx.proposalId,
       });
       this.completeStage(stage);
+      this.checkpoint(ctx);
     } catch (e) {
       this.failStage(stage, e);
+      this.checkpoint(ctx);
     }
     return ctx;
   }
@@ -433,6 +474,7 @@ export class ChangePipeline {
 
   createContext(proposalId: string, sessionId: string): PipelineContext {
     return {
+      pipelineId: `pl_${nanoid(8)}`,
       proposalId,
       sessionId,
       stages: [],
@@ -441,9 +483,24 @@ export class ChangePipeline {
     };
   }
 
+  /**
+   * DB에 저장된 파이프라인 상태로부터 컨텍스트를 복원한다.
+   * 프로세스 중단 후 재개 시 사용.
+   */
+  resumeContext(proposalId: string): PipelineContext | null {
+    return this.pipelineStore.load(proposalId);
+  }
+
   private transition(ctx: PipelineContext, to: ChangeWorkflowState): void {
     assertValidChangeTransition(ctx.currentState, to);
     ctx.currentState = to;
+  }
+
+  /**
+   * 현재 파이프라인 상태를 DB에 체크포인트한다.
+   */
+  private checkpoint(ctx: PipelineContext): void {
+    this.pipelineStore.save(ctx);
   }
 
   private startStage(ctx: PipelineContext, stage: PipelineStageRecord["stage"]): PipelineStageRecord {
@@ -468,7 +525,7 @@ export class ChangePipeline {
   }
 
   private audit(ctx: PipelineContext, eventType: string, details: Record<string, unknown>): void {
-    ctx.auditTrail.push({
+    const event: AuditEvent = {
       eventId: `evt_${nanoid(8)}`,
       eventType,
       proposalId: ctx.proposalId,
@@ -476,6 +533,12 @@ export class ChangePipeline {
       details,
       severity: "info",
       timestamp: Date.now(),
-    });
+    };
+    ctx.auditTrail.push(event);
+    try {
+      this.auditEventStore.save(event);
+    } catch {
+      // 감사 로그 저장 실패는 파이프라인을 중단하지 않음
+    }
   }
 }

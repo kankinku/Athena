@@ -25,6 +25,7 @@ import {
 } from "./change-workflow-state.js";
 import type { ImpactAnalysisResult } from "../impact/impact-analyzer.js";
 import { ExecutionGate } from "./execution-gate.js";
+import { ConflictDetector } from "./conflict-detector.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export interface SummonResult {
   mandatoryAgents: string[];
   conditionalAgents: string[];
   observerAgents: string[];
+  /** observer 에이전트는 read-only — 쓰기 시도 시 PathEnforcer가 차단 */
+  readOnlyAgents: string[];
   responseDeadlineAt: number;
 }
 
@@ -47,10 +50,12 @@ export interface ConsensusResult {
 export class MeetingOrchestrator {
   private meetingStore: MeetingStore;
   private executionGate: ExecutionGate;
+  private conflictDetector: ConflictDetector;
 
-  constructor(meetingStore?: MeetingStore, executionGate?: ExecutionGate) {
+  constructor(meetingStore?: MeetingStore, executionGate?: ExecutionGate, conflictDetector?: ConflictDetector) {
     this.meetingStore = meetingStore ?? new MeetingStore();
     this.executionGate = executionGate ?? new ExecutionGate();
+    this.conflictDetector = conflictDetector ?? new ConflictDetector();
   }
 
   /**
@@ -100,6 +105,7 @@ export class MeetingOrchestrator {
       mandatoryAgents: uniqueMandatory,
       conditionalAgents: uniqueConditional,
       observerAgents: uniqueObservers,
+      readOnlyAgents: uniqueObservers, // observer = read-only
       responseDeadlineAt: now + responseTimeoutMs,
     };
   }
@@ -140,10 +146,31 @@ export class MeetingOrchestrator {
 
   /**
    * 충돌이 없으면 라운드 4를 건너뛰고 라운드 5로 진행한다.
+   * 라운드-3 진입 시 실행 계획이 있으면 충돌 자동 감지를 실행한다.
    */
-  skipToVoting(meetingId: string): MeetingSessionRecord | null {
+  skipToVoting(
+    meetingId: string,
+    executionPlan?: ExecutionPlanRecord,
+    changedPaths?: string[],
+  ): MeetingSessionRecord | null {
     const meeting = this.meetingStore.getMeetingSession(meetingId);
     if (!meeting || meeting.state !== "round-3") return null;
+
+    // 실행 계획이 있으면 충돌 자동 감지 실행
+    if (executionPlan && meeting.conflictPoints.length === 0) {
+      const autoConflicts = this.conflictDetector.detectAll(
+        executionPlan,
+        changedPaths ?? [],
+      );
+      for (const conflict of autoConflicts) {
+        this.addConflict(meetingId, conflict);
+      }
+      // 감지 후 회의 재조회
+      const refreshed = this.meetingStore.getMeetingSession(meetingId);
+      if (refreshed && refreshed.conflictPoints.length > 0) {
+        return this.advanceRound(meetingId);
+      }
+    }
 
     if (meeting.conflictPoints.length === 0) {
       // 충돌 없음 → 라운드 4 건너뛰기

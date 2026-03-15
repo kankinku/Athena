@@ -287,6 +287,7 @@ export function quickVerify(
     requiredTests: [],
     rollbackPlan: "",
     featureFlags: [],
+    mergeGates: {},
     status: "in-progress",
     createdAt: Date.now(),
     updatedAt: Date.now(),

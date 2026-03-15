@@ -76,6 +76,15 @@ export class ExecutionGate {
     // 영향받는 모듈의 테스트 수집
     const requiredTests = this.collectRequiredTests(meeting);
 
+    // 영향받는 모듈의 merge gate 수집
+    const mergeGates: Record<string, string> = {};
+    for (const assignment of assignments) {
+      const mod = this.graph.modules.get(assignment.moduleId);
+      if (mod?.mergeGate) {
+        mergeGates[assignment.moduleId] = mod.mergeGate;
+      }
+    }
+
     return {
       executionPlanId: planId,
       proposalId: meeting.proposalId,
@@ -84,6 +93,7 @@ export class ExecutionGate {
       requiredTests,
       rollbackPlan,
       featureFlags: [],
+      mergeGates,
       status: "pending",
       createdAt: now,
       updatedAt: now,
@@ -239,6 +249,50 @@ export class ExecutionGate {
       canAutoExecute: true,
       reason: "모든 자동 실행 조건 충족",
       requiredApprovals: [],
+    };
+  }
+
+  /**
+   * merge 전 merge gate 조건을 검증한다.
+   * 각 영향 모듈의 merge gate에 필요한 승인과 체크를 확인한다.
+   */
+  verifyMergeGates(
+    plan: ExecutionPlanRecord,
+    completedChecks: string[],
+    approvals: string[],
+  ): GateCheckResult {
+    const checks: GateCheck[] = [];
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+
+    if (!plan.mergeGates || Object.keys(plan.mergeGates).length === 0) {
+      checks.push({
+        name: "merge-gates",
+        passed: true,
+        message: "No merge gates defined",
+      });
+      return { passed: true, checks, blockers, warnings };
+    }
+
+    for (const [moduleId, gateName] of Object.entries(plan.mergeGates)) {
+      const gateOk = completedChecks.includes(gateName) || approvals.includes(gateName);
+      checks.push({
+        name: `merge-gate:${moduleId}`,
+        passed: gateOk,
+        message: gateOk
+          ? `Merge gate '${gateName}' for ${moduleId}: satisfied`
+          : `Merge gate '${gateName}' for ${moduleId}: NOT satisfied`,
+      });
+      if (!gateOk) {
+        blockers.push(`Module '${moduleId}' requires merge gate '${gateName}'`);
+      }
+    }
+
+    return {
+      passed: blockers.length === 0,
+      checks,
+      blockers,
+      warnings,
     };
   }
 

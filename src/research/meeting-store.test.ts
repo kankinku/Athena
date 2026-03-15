@@ -285,6 +285,7 @@ test("MeetingStore persists execution plans and verification results", async () 
       requiredTests: ["src/store/migrations-upgrade.test.ts"],
       rollbackPlan: "git reset --hard HEAD~1",
       featureFlags: [],
+      mergeGates: {},
       status: "pending",
       createdAt: now,
       updatedAt: now,

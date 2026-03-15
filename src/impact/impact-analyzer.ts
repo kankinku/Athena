@@ -28,12 +28,22 @@ export interface ModuleImpact {
   mergeGate: string;
 }
 
+export type NonCodeDependencyType = "test" | "deploy" | "config" | "contract" | "schema";
+
+export interface NonCodeImpact {
+  type: NonCodeDependencyType;
+  description: string;
+  affectedModules: string[];
+  severity: "info" | "warning" | "critical";
+}
+
 export interface ImpactAnalysisResult {
   changedPaths: string[];
   directlyAffected: ModuleImpact[];
   indirectlyAffected: ModuleImpact[];
   observers: ModuleImpact[];
   allAffected: ModuleImpact[];
+  nonCodeImpacts: NonCodeImpact[];
   meetingRequired: boolean;
   meetingRequiredReason: string;
   analyzedAt: number;
@@ -93,7 +103,10 @@ export class ImpactAnalyzer {
 
     const allAffected = [...directImpacts, ...indirectImpacts, ...observerImpacts];
 
-    // 5. 회의 필요 여부 판단
+    // 5. 코드 외 의존성 영향 분석
+    const nonCodeImpacts = this.analyzeNonCodeDependencies(normalizedPaths, directModules);
+
+    // 6. 회의 필요 여부 판단
     const { required: meetingRequired, reason: meetingRequiredReason } =
       this.determineMeetingRequired(directImpacts, indirectImpacts, changedInterfaces);
 
@@ -103,6 +116,7 @@ export class ImpactAnalyzer {
       indirectlyAffected: indirectImpacts,
       observers: observerImpacts,
       allAffected,
+      nonCodeImpacts,
       meetingRequired,
       meetingRequiredReason,
       analyzedAt: Date.now(),
@@ -248,12 +262,7 @@ export class ImpactAnalyzer {
     indirect: ModuleImpact[],
     changedInterfaces: Map<string, string[]>,
   ): { required: boolean; reason: string } {
-    // 단일 모듈 + 인터페이스 변경 없음 → 회의 불필요
-    if (direct.length === 1 && indirect.length === 0 && changedInterfaces.size === 0) {
-      return { required: false, reason: "single-module-internal" };
-    }
-
-    // critical/high 위험도 모듈 포함 → 회의 필요
+    // 1. critical/high 위험도 모듈 포함 → 항상 회의 필요 (단일 모듈이라도)
     const criticalDirect = direct.filter((m) => m.riskLevel === "critical" || m.riskLevel === "high");
     if (criticalDirect.length > 0) {
       return {
@@ -262,23 +271,120 @@ export class ImpactAnalyzer {
       };
     }
 
-    // 공용 인터페이스 변경 → 회의 필요
+    // 2. 공용 인터페이스 변경 → 회의 필요
     if (changedInterfaces.size > 0) {
       const modules = Array.from(changedInterfaces.keys()).join(", ");
       return { required: true, reason: `공용 인터페이스 변경: ${modules}` };
     }
 
-    // 2개 이상 모듈 직접 수정 → 회의 필요
+    // 3. 2개 이상 모듈 직접 수정 → 회의 필요
     if (direct.length >= 2) {
       return { required: true, reason: `${direct.length}개 모듈 동시 수정` };
     }
 
-    // 간접 영향 모듈이 있으면 회의 필요
+    // 4. 간접 영향 모듈이 있으면 회의 필요
     if (indirect.length > 0) {
       return { required: true, reason: `간접 영향 모듈 ${indirect.length}개` };
     }
 
+    // 5. 단일 모듈 + low/medium 위험도 + 인터페이스 변경 없음 → 회의 불필요
     return { required: false, reason: "single-module-internal" };
+  }
+
+  /**
+   * 코드 외 의존성(테스트, 배포, 설정, 계약, 스키마) 영향을 분석한다.
+   */
+  private analyzeNonCodeDependencies(
+    changedPaths: string[],
+    directModules: string[],
+  ): NonCodeImpact[] {
+    const impacts: NonCodeImpact[] = [];
+
+    for (const filePath of changedPaths) {
+      // DB 스키마 (마이그레이션)
+      if (filePath.includes("migrations") && filePath.endsWith(".ts")) {
+        impacts.push({
+          type: "schema",
+          description: `DB 스키마 변경: ${filePath}`,
+          affectedModules: Array.from(this.graph.modules.keys()), // 모든 모듈에 잠재적 영향
+          severity: "critical",
+        });
+      }
+
+      // 배포 설정 (CI, GitHub Actions)
+      if (filePath.includes(".github/") || filePath.includes("scripts/")) {
+        impacts.push({
+          type: "deploy",
+          description: `배포/CI 설정 변경: ${filePath}`,
+          affectedModules: Array.from(this.graph.modules.keys()),
+          severity: "warning",
+        });
+      }
+
+      // 패키지 의존성
+      if (filePath === "package.json" || filePath === "package-lock.json") {
+        impacts.push({
+          type: "config",
+          description: `패키지 의존성 변경: ${filePath}`,
+          affectedModules: Array.from(this.graph.modules.keys()),
+          severity: "warning",
+        });
+      }
+
+      // TypeScript 설정
+      if (filePath === "tsconfig.json") {
+        impacts.push({
+          type: "config",
+          description: `TypeScript 설정 변경`,
+          affectedModules: Array.from(this.graph.modules.keys()),
+          severity: "warning",
+        });
+      }
+
+      // 계약 파일 (contracts.ts)
+      if (filePath.endsWith("contracts.ts") || filePath.endsWith("contracts.js")) {
+        const moduleId = directModules.find((m) => {
+          const mod = this.graph.modules.get(m);
+          return mod?.paths.some((p) => matchesPattern(filePath, normalizePath(p)));
+        });
+        if (moduleId) {
+          // 의존하는 모든 모듈에 계약 영향
+          const dependents = this.graph.reverseEdges.get(moduleId) ?? new Set();
+          impacts.push({
+            type: "contract",
+            description: `${moduleId} 모듈 계약(타입) 변경: ${filePath}`,
+            affectedModules: [moduleId, ...dependents],
+            severity: "critical",
+          });
+        }
+      }
+
+      // 테스트 파일 직접 변경
+      if (filePath.includes(".test.") || filePath.includes(".spec.")) {
+        const moduleId = directModules.find((m) => {
+          const mod = this.graph.modules.get(m);
+          return mod?.affectedTests.some((t) => normalizePath(t) === filePath);
+        });
+        impacts.push({
+          type: "test",
+          description: `테스트 파일 변경: ${filePath}`,
+          affectedModules: moduleId ? [moduleId] : [],
+          severity: "info",
+        });
+      }
+
+      // 모듈 레지스트리
+      if (filePath.includes("module-registry")) {
+        impacts.push({
+          type: "config",
+          description: `모듈 레지스트리 변경 — 영향도 분석 결과가 달라질 수 있음`,
+          affectedModules: Array.from(this.graph.modules.keys()),
+          severity: "warning",
+        });
+      }
+    }
+
+    return impacts;
   }
 
   private buildSummaryText(

@@ -16,12 +16,14 @@ const VALID_CHANGE_TRANSITIONS: Record<ChangeWorkflowState, ChangeWorkflowState[
   "agents-summoned":  ["in-meeting", "failed"],
   "in-meeting":       ["agreed", "on-hold", "rejected", "failed"],
   "agreed":           ["executing", "on-hold", "failed"],
-  "executing":        ["verifying", "failed"],
-  "verifying":        ["completed", "remeeting", "failed"],
-  "completed":        [],
-  "remeeting":        ["in-meeting", "on-hold", "failed"],
+  "executing":        ["verifying", "rolled-back", "failed"],
+  "verifying":        ["merged", "completed", "remeeting", "rolled-back", "failed"],
+  "merged":           [],                                         // terminal
+  "completed":        ["merged"],                                 // can promote to merged
+  "remeeting":        ["in-meeting", "on-hold", "rolled-back", "failed"],
+  "rolled-back":      ["draft"],                                  // can restart from draft
   "on-hold":          ["draft", "in-meeting", "rejected", "failed"],
-  "rejected":         [],
+  "rejected":         [],                                         // terminal
   "failed":           ["draft"],
 };
 
@@ -64,7 +66,7 @@ export function getNextChangeStates(from: ChangeWorkflowState): ChangeWorkflowSt
  * 해당 상태가 종결 상태(terminal)인지 반환한다.
  */
 export function isTerminalChangeState(state: ChangeWorkflowState): boolean {
-  return state === "completed" || state === "rejected";
+  return state === "merged" || state === "rejected";
 }
 
 /**
@@ -85,7 +87,8 @@ const VALID_MEETING_TRANSITIONS: Record<MeetingState, MeetingState[]> = {
   "round-3":         ["round-4", "round-5", "on-hold", "failed"],  // skip round 4 if no conflicts
   "round-4":         ["round-5", "on-hold", "failed"],
   "round-5":         ["completed", "on-hold", "failed"],
-  "completed":       [],
+  "completed":       ["archived"],
+  "archived":        [],                                            // terminal
   "on-hold":         ["scheduled", "round-1", "failed"],
   "failed":          ["scheduled"],
 };

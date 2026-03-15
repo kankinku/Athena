@@ -51,14 +51,14 @@ test("ChangeWorkflow: same state transition is allowed (no-op)", () => {
   assert.doesNotThrow(() => assertValidChangeTransition("in-meeting", "in-meeting"));
 });
 
-test("ChangeWorkflow: completed → executing is blocked", () => {
+test("ChangeWorkflow: merged → executing is blocked (terminal)", () => {
   assert.throws(
-    () => assertValidChangeTransition("completed", "executing"),
-    /Invalid change workflow transition: completed -> executing/,
+    () => assertValidChangeTransition("merged", "executing"),
+    /Invalid change workflow transition: merged -> executing/,
   );
 });
 
-test("ChangeWorkflow: rejected → executing is blocked", () => {
+test("ChangeWorkflow: rejected → executing is blocked (terminal)", () => {
   assert.throws(
     () => assertValidChangeTransition("rejected", "executing"),
     /Invalid change workflow transition: rejected -> executing/,
@@ -108,15 +108,15 @@ test("getNextChangeStates for draft", () => {
   assert.ok(!next.includes("executing"));
 });
 
-test("getNextChangeStates for completed is empty (terminal)", () => {
-  const next = getNextChangeStates("completed");
+test("getNextChangeStates for merged is empty (terminal)", () => {
+  const next = getNextChangeStates("merged");
   assert.equal(next.length, 0);
 });
 
 // ─── isTerminalChangeState ────────────────────────────────────────────────────
 
-test("completed and rejected are terminal states", () => {
-  assert.equal(isTerminalChangeState("completed"), true);
+test("merged and rejected are terminal states", () => {
+  assert.equal(isTerminalChangeState("merged"), true);
   assert.equal(isTerminalChangeState("rejected"), true);
 });
 
@@ -171,6 +171,33 @@ test("Meeting: completed → scheduled is blocked (terminal)", () => {
 
 test("Meeting: on-hold → scheduled allows resume", () => {
   assert.doesNotThrow(() => assertValidMeetingTransition("on-hold", "scheduled"));
+});
+
+// ─── New states: merged, rolled-back, archived ────────────────────────────────
+
+test("ChangeWorkflow: verifying → merged is valid (final merge)", () => {
+  assert.doesNotThrow(() => assertValidChangeTransition("verifying", "merged"));
+});
+
+test("ChangeWorkflow: executing → rolled-back is valid", () => {
+  assert.doesNotThrow(() => assertValidChangeTransition("executing", "rolled-back"));
+});
+
+test("ChangeWorkflow: rolled-back → draft allows restart", () => {
+  assert.doesNotThrow(() => assertValidChangeTransition("rolled-back", "draft"));
+});
+
+test("ChangeWorkflow: completed → merged is valid (promote)", () => {
+  assert.doesNotThrow(() => assertValidChangeTransition("completed", "merged"));
+});
+
+test("Meeting: completed → archived is valid", () => {
+  assert.doesNotThrow(() => assertValidMeetingTransition("completed", "archived"));
+});
+
+test("Meeting: archived is terminal (no transitions out)", () => {
+  const next = canTransitionMeeting("archived", "scheduled");
+  assert.equal(next, false);
 });
 
 // ─── roundToMeetingState ──────────────────────────────────────────────────────

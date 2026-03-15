@@ -626,14 +626,16 @@ export interface ImprovementEvaluationRecord {
  */
 export type ChangeWorkflowState =
   | "draft"             // change proposal 작성 중
-  | "impact-analyzed"   // 영향도 분석 완료
-  | "agents-summoned"   // 관련 에이전트 소집됨
-  | "in-meeting"        // 에이전트 회의 진행 중
+  | "impact-analyzed"   // 영향도 분석 완료 (spec: analyzed)
+  | "agents-summoned"   // 관련 에이전트 소집됨 (spec: summoned)
+  | "in-meeting"        // 에이전트 회의 진행 중 (spec: in_meeting)
   | "agreed"            // 합의 도달, 실행 계획 확정
   | "executing"         // 모듈 오너들이 실행 중
   | "verifying"         // 통합 테스트 검증 중
-  | "completed"         // 변경 완료 + 검증 통과
-  | "remeeting"         // 검증 실패로 재협의
+  | "merged"            // 최종 반영 완료 (spec §13)
+  | "completed"         // 변경 완료 + 검증 통과 (merged의 alias)
+  | "remeeting"         // 검증 실패로 재협의 (spec: remeeting_required)
+  | "rolled-back"       // 롤백 완료 (spec: rolled_back)
   | "on-hold"           // 합의 불가로 보류
   | "rejected"          // 거절됨
   | "failed";           // 오류/타임아웃
@@ -662,14 +664,15 @@ export type ChangeProposalStatus =
  * 에이전트 회의 세션 상태.
  */
 export type MeetingState =
-  | "scheduled"
-  | "pending-quorum"
-  | "round-1"
+  | "scheduled"         // spec: created
+  | "pending-quorum"    // spec: quorum_pending
+  | "round-1"           // spec: active (rounds 1-5)
   | "round-2"
-  | "round-3"
+  | "round-3"           // spec: conflict_resolution (implicit)
   | "round-4"
   | "round-5"
-  | "completed"
+  | "completed"         // spec: concluded
+  | "archived"          // spec: archived
   | "on-hold"
   | "failed";
 
@@ -869,4 +872,101 @@ export interface AffectedModuleRecord {
   impactLevel: ModuleImpactLevel;
   impactReason: string;
   affectedInterfaces: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENT ROLES (spec §14)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 에이전트 역할. 각 역할은 회의에서의 발언 권한과 실행 범위가 다르다.
+ */
+export type AgentRole =
+  | "proposer"      // 변경 제안 생성
+  | "owner"         // 특정 모듈 책임, 입장 제출, 수정 수행
+  | "integrator"    // 교차 모듈 충돌 점검
+  | "risk"          // 보안/운영/배포 위험 점검
+  | "operator";     // 최종 승인과 override
+
+/**
+ * 에이전트 등록 정보. module-registry.yaml + 런타임 확장.
+ */
+export interface AgentRegistration {
+  agentId: string;
+  role: AgentRole;
+  moduleId?: string;       // owner 역할일 때 담당 모듈
+  humanOwnerId?: string;   // GitHub CODEOWNERS 대응 사람
+  capabilities: string[];  // 사용 가능한 도구 카테고리
+  maxConcurrentTasks: number;
+  active: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERFACE CONTRACT (spec §3, §12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 모듈 간 공용 인터페이스 계약. 1급 데이터 객체.
+ * 변경 시 의존 모듈에 자동 영향 분석이 트리거된다.
+ */
+export interface InterfaceContract {
+  contractId: string;
+  moduleId: string;              // 이 인터페이스를 소유한 모듈
+  interfaceName: string;         // 예: "ProposalStore", "getDb()"
+  interfaceType: "function" | "class" | "type" | "const" | "enum" | "api" | "schema" | "config";
+  sourceFile: string;            // 정의 파일 경로
+  signature?: string;            // 함수 시그니처 또는 타입 요약
+  dependentModules: string[];    // 이 인터페이스를 사용하는 모듈
+  breakingChangeRisk: "low" | "medium" | "high";
+  lastChangedAt?: number;
+  lastVerifiedAt?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOVERNANCE (spec §10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 실행 시점 경로 범위 강제 결과.
+ */
+export interface PathEnforcementResult {
+  allowed: boolean;
+  agentId: string;
+  moduleId: string;
+  attemptedPaths: string[];
+  allowedPatterns: string[];
+  violations: string[];
+  enforcedAt: number;
+  action: "allow" | "block" | "audit";
+}
+
+/**
+ * 감사 이벤트 (spec §12: AuditEvent).
+ */
+export interface AuditEvent {
+  eventId: string;
+  eventType: string;           // proposal_created, agents_summoned, meeting_concluded, ...
+  proposalId?: string;
+  meetingId?: string;
+  agentId?: string;
+  moduleId?: string;
+  details: Record<string, unknown>;
+  severity: "info" | "warning" | "critical";
+  timestamp: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHANGE PIPELINE OUTCOME (spec §15: end-to-end flow)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 전체 파이프라인의 단계별 결과를 추적하는 레코드.
+ */
+export interface PipelineStageRecord {
+  stage: "impact" | "summon" | "meeting" | "decision" | "execution" | "verification" | "merge";
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  startedAt?: number;
+  completedAt?: number;
+  result?: Record<string, unknown>;
+  error?: string;
 }

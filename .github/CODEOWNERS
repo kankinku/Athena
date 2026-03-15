@@ -1,0 +1,56 @@
+# Athena CODEOWNERS
+#
+# GitHub는 이 파일로 변경된 파일의 소유자에게 자동 리뷰를 요청한다.
+# config/module-registry.yaml의 owner_agent 매핑과 동기화된다.
+#
+# 참고: GitHub CODEOWNERS는 GitHub 사용자/팀을 사용하지만,
+# Athena의 모듈 협의 시스템은 에이전트 ID를 사용한다.
+# 이 파일은 사람 리뷰어 + 에이전트 매핑의 인간 대응 역할을 한다.
+#
+# sync source: config/module-registry.yaml
+# sync tool:   src/impact/codeowners-sync.ts
+
+# ─── CORE DATA LAYER ──────────────────────────────────────────────────────────
+# module_id: store | owner_agent: store-agent | risk: critical
+/src/store/                             @snoglobe
+
+# ─── RESEARCH / PROPOSAL ENGINE ───────────────────────────────────────────────
+# module_id: research | owner_agent: research-agent | risk: high
+/src/research/                          @snoglobe
+
+# ─── IMPACT ANALYSIS ──────────────────────────────────────────────────────────
+# module_id: impact | owner_agent: impact-agent | risk: medium
+/src/impact/                            @snoglobe
+/config/module-registry.yaml            @snoglobe
+
+# ─── CLI INTERFACE ─────────────────────────────────────────────────────────────
+# module_id: cli | owner_agent: cli-agent | risk: medium
+/src/cli/                               @snoglobe
+
+# ─── TUI / DASHBOARD ──────────────────────────────────────────────────────────
+# module_id: ui | owner_agent: ui-agent | risk: low
+/src/ui/                                @snoglobe
+/src/app.tsx                            @snoglobe
+
+# ─── REMOTE EXECUTION ─────────────────────────────────────────────────────────
+# module_id: remote | owner_agent: remote-agent | risk: high
+/src/remote/                            @snoglobe
+
+# ─── SECURITY ──────────────────────────────────────────────────────────────────
+# module_id: security | owner_agent: security-agent | risk: critical
+/src/security/                          @snoglobe
+
+# ─── ACP TOOLS ─────────────────────────────────────────────────────────────────
+# module_id: tools | owner_agent: tools-agent | risk: high
+/src/tools/                             @snoglobe
+/src/acp/                               @snoglobe
+
+# ─── PROVIDERS ─────────────────────────────────────────────────────────────────
+# module_id: providers | owner_agent: providers-agent | risk: medium
+/src/providers/                         @snoglobe
+
+# ─── GLOBAL / CROSS-CUTTING ───────────────────────────────────────────────────
+# These require broader review
+/package.json                           @snoglobe
+/tsconfig.json                          @snoglobe
+/.github/                               @snoglobe

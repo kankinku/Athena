@@ -1,0 +1,136 @@
+# Affected-Only CI
+# 변경된 파일에 영향받는 모듈의 테스트만 실행한다.
+# Nx의 affected 패턴과 동일한 원리.
+
+name: Affected CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  detect-affected:
+    runs-on: ubuntu-latest
+    outputs:
+      store: ${{ steps.detect.outputs.store }}
+      research: ${{ steps.detect.outputs.research }}
+      cli: ${{ steps.detect.outputs.cli }}
+      ui: ${{ steps.detect.outputs.ui }}
+      remote: ${{ steps.detect.outputs.remote }}
+      security: ${{ steps.detect.outputs.security }}
+      impact: ${{ steps.detect.outputs.impact }}
+      tools: ${{ steps.detect.outputs.tools }}
+      providers: ${{ steps.detect.outputs.providers }}
+      global: ${{ steps.detect.outputs.global }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected modules
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          CHANGED=$(git diff --name-only $BASE HEAD 2>/dev/null || echo "")
+
+          # Module detection based on config/module-registry.yaml paths
+          echo "store=$(echo "$CHANGED" | grep -q '^src/store/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "research=$(echo "$CHANGED" | grep -q '^src/research/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "cli=$(echo "$CHANGED" | grep -q '^src/cli/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "ui=$(echo "$CHANGED" | grep -q '^src/ui/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "remote=$(echo "$CHANGED" | grep -q '^src/remote/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "security=$(echo "$CHANGED" | grep -q '^src/security/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "impact=$(echo "$CHANGED" | grep -q '^src/impact/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "tools=$(echo "$CHANGED" | grep -qE '^src/(tools|acp)/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "providers=$(echo "$CHANGED" | grep -q '^src/providers/' && echo true || echo false)" >> $GITHUB_OUTPUT
+
+          # Global changes affect all modules
+          GLOBAL=$(echo "$CHANGED" | grep -qE '^(package\.json|tsconfig\.json|src/research/contracts\.ts)' && echo true || echo false)
+          echo "global=$GLOBAL" >> $GITHUB_OUTPUT
+
+          echo "Changed files:"
+          echo "$CHANGED"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: detect-affected
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  test-store:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, build]
+    if: needs.detect-affected.outputs.store == 'true' || needs.detect-affected.outputs.global == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test src/store/*.test.ts
+
+  test-research:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, build]
+    if: needs.detect-affected.outputs.research == 'true' || needs.detect-affected.outputs.global == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:research
+
+  test-security:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, build]
+    if: needs.detect-affected.outputs.security == 'true' || needs.detect-affected.outputs.global == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:phase6
+
+  test-impact:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, build]
+    if: needs.detect-affected.outputs.impact == 'true' || needs.detect-affected.outputs.global == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test src/impact/*.test.ts
+
+  test-ui:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, build]
+    if: needs.detect-affected.outputs.ui == 'true' || needs.detect-affected.outputs.global == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test src/ui/**/*.test.tsx

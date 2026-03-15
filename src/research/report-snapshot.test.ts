@@ -179,6 +179,7 @@ test("buildResearchReportInput keeps key operator sections stable", async () => 
   decision_score: 0.7
   claim_support: evidence=0.80 freshness=0.70 contradiction=0.10 uncovered=0
   evidence_health: evidence=0.00 model=0.00 separation=0.00 gaps=unresolved_claims=1|low_source_coverage|stale_evidence
+  evidence_coverage_gap: unresolved_claims=1, low_source_coverage, stale_evidence
   weighted_score: 0.74
   score_axes: expected_gain=0.8, evidence_strength=0.8, evidence_freshness=0.7, contradiction_pressure=0.1, memory_risk=0.2, stability_risk=0.2, integration_cost=0.3, rollback_difficulty=0.1, observability_readiness=0.6
   stop_conditions: loss regresses

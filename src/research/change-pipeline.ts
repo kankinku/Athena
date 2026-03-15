@@ -34,6 +34,10 @@ import { VerificationPipeline } from "./verification-pipeline.js";
 import { AuditEventStore } from "./audit-event-store.js";
 import { PipelineStore } from "./pipeline-store.js";
 import { BudgetEnforcer } from "./budget-enforcer.js";
+import { ChangeDetector } from "./change-detector.js";
+import { GitIntegration } from "./git-integration.js";
+import { InterfaceWatcher } from "./interface-watcher.js";
+import { InterfaceContractStore } from "./interface-contract-store.js";
 import type { ToolApprovalGate } from "../security/tool-approval.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -72,6 +76,10 @@ export class ChangePipeline {
   private auditEventStore: AuditEventStore;
   private pipelineStore: PipelineStore;
   private budgetEnforcer: BudgetEnforcer;
+  private changeDetector: ChangeDetector;
+  private gitIntegration: GitIntegration;
+  private interfaceWatcher: InterfaceWatcher;
+  private contractStore: InterfaceContractStore;
 
   constructor(deps?: {
     proposalStore?: ChangeProposalStore;
@@ -84,6 +92,9 @@ export class ChangePipeline {
     auditEventStore?: AuditEventStore;
     pipelineStore?: PipelineStore;
     budgetEnforcer?: BudgetEnforcer;
+    changeDetector?: ChangeDetector;
+    gitIntegration?: GitIntegration;
+    interfaceWatcher?: InterfaceWatcher;
   }) {
     this.proposalStore = deps?.proposalStore ?? new ChangeProposalStore();
     this.impactAnalyzer = deps?.impactAnalyzer ?? new ImpactAnalyzer();
@@ -95,6 +106,12 @@ export class ChangePipeline {
     this.auditEventStore = deps?.auditEventStore ?? new AuditEventStore();
     this.pipelineStore = deps?.pipelineStore ?? new PipelineStore();
     this.budgetEnforcer = deps?.budgetEnforcer ?? new BudgetEnforcer({ auditStore: this.auditEventStore });
+    this.changeDetector = deps?.changeDetector ?? new ChangeDetector({ proposalStore: this.proposalStore, auditStore: this.auditEventStore });
+    this.gitIntegration = deps?.gitIntegration ?? new GitIntegration();
+    this.contractStore = new InterfaceContractStore();
+    this.interfaceWatcher = deps?.interfaceWatcher ?? new InterfaceWatcher("pending", {
+      onViolation: () => {},
+    }, this.contractStore);
   }
 
   /**
@@ -323,9 +340,26 @@ export class ChangePipeline {
         }
       }
 
+      // 인터페이스 실시간 감시 시작
+      const watchModuleIds = ctx.executionPlan.taskAssignments.map((t) => t.moduleId);
+      this.interfaceWatcher = new InterfaceWatcher(
+        ctx.proposalId,
+        {
+          onViolation: (violation) => {
+            this.audit(ctx, "interface_violation_detected", { ...violation });
+          },
+          onRemeetingRequired: (_proposalId, reason) => {
+            this.audit(ctx, "interface_remeeting_triggered", { reason });
+          },
+        },
+        this.contractStore,
+      );
+      this.interfaceWatcher.start(watchModuleIds, process.cwd());
+
       this.audit(ctx, "execution_started", {
         planId: ctx.executionPlan.executionPlanId,
         taskCount: ctx.executionPlan.taskAssignments.length,
+        watchedModules: watchModuleIds,
       });
       this.completeStage(stage);
       this.checkpoint(ctx);
@@ -341,6 +375,9 @@ export class ChangePipeline {
    * Stage 6: Affected-Only Verification
    */
   verify(ctx: PipelineContext): PipelineContext {
+    // 실행 단계에서 시작된 인터페이스 감시 중지
+    this.interfaceWatcher.stop();
+
     const stage = this.startStage(ctx, "verification");
     try {
       if (!ctx.executionPlan || !ctx.impactResult) {
@@ -432,6 +469,34 @@ export class ChangePipeline {
       this.checkpoint(ctx);
     }
     return ctx;
+  }
+
+  /**
+   * Git diff 기반으로 변경을 자동 감지하여 ChangeProposal을 생성한다.
+   * Git hook에서 호출되거나 수동으로 실행.
+   */
+  async detectAndCreateProposal(
+    sessionId: string,
+    ignorePaths: string[] = [],
+  ): Promise<PipelineContext | null> {
+    const isGit = await this.gitIntegration.isGitRepo();
+    if (!isGit) return null;
+
+    const detection = await this.gitIntegration.detectPostCommitChanges(ignorePaths);
+    if (!detection) return null;
+
+    // ChangeDetector를 통해 proposal 생성
+    const proposal = this.changeDetector.fromGitDiff(detection.changedFiles.join("\n"));
+    if (!proposal) return null;
+
+    // ChangeDetector를 통해 ChangeProposal DB 등록
+    const created = this.changeDetector.createProposalFromChange(sessionId, proposal);
+    if (!created) return null;
+
+    // 파이프라인 시작
+    return this.runFullPipeline(created.proposalId, sessionId, {
+      rollbackPlan: "git reset --hard HEAD~1",
+    });
   }
 
   /**

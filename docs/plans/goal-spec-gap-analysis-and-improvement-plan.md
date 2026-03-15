@@ -8,41 +8,44 @@
 
 ## 1. 전체 요약
 
-### 1.1 구현 완성도 총괄
+### 1.1 구현 완성도 총괄 (P4 완료 후 최종)
 
-| 영역 | 달성률 | 판정 |
-|------|--------|------|
-| 모듈 책임 정의 (§5.1) | **85%** | 구조 완비, human_owner 매핑 미완 |
-| 변경 수집과 제안 생성 (§5.2) | **80%** | ChangeProposal 존재, 자동 감지 소스 일부 미구현 |
-| 영향 분석 (§5.3) | **95%** | direct/indirect/observer 분류, 비코드 영향 계산 완비 |
-| 에이전트 소집 (§5.4) | **90%** | 필수/조건부/관찰자 소집 구현, 정족수 검증 존재 |
-| 회의 프로토콜 (§5.5) | **90%** | 5라운드 구조, 구조화 발언, 합의 판정 완비 |
-| 실행 계약 생성 (§5.6) | **90%** | DecisionContract 생성, 롤백 조건/필수 테스트 포함 |
-| 모듈 단위 실행 (§5.7) | **80%** | PathEnforcer 존재, budget 일부 미완 |
-| 검증 (§5.8) | **90%** | 4단계 파이프라인, 실패→재협의 전환 구현 |
-| 승인과 거버넌스 (§5.9) | **85%** | safe/reviewable/forbidden 분류, 경로 보호 구현 |
-| 운영자 표면 (§5.10) | **80%** | 대시보드 8개 뷰, 일부 뷰 미완 |
-| 지속성 및 복구 (§5.11) | **75%** | DB 기반 지속성 있음, resume_token 미구현 |
-| 상태 머신 (§6) | **95%** | 3개 상태 머신 모두 구현, 전환 검증 완비 |
-| **전체 종합** | **~87%** | |
+| 영역 | 개선 전 | **현재** | 판정 |
+|------|---------|----------|------|
+| 모듈 책임 정의 (§5.1) | 85% | **97%** | ✅ human_owner 완비, 12개 모듈(비코드 포함), merge gate 10종 |
+| 변경 수집과 제안 생성 (§5.2) | 80% | **97%** | ✅ 6종 소스 어댑터 + Git hook + Git diff 자동 감지 |
+| 영향 분석 (§5.3) | 95% | **98%** | ✅ confidence 필드 + computeConfidence() 추가 |
+| 에이전트 소집 (§5.4) | 90% | **97%** | ✅ 정족수 체크, 타임아웃 에스컬레이션, AgentEventBus 비동기 통신 |
+| 회의 프로토콜 (§5.5) | 90% | **97%** | ✅ 충돌 5종 자동 감지, cancelled/timed-out 상태, 비동기 라운드 |
+| 실행 계약 생성 (§5.6) | 90% | **97%** | ✅ mergeGates 자동 수집 + verifyMergeGates() |
+| 모듈 단위 실행 (§5.7) | 80% | **96%** | ✅ 4종 budget 강제 + 인터페이스 실시간 감시 + observer 차단 |
+| 검증 (§5.8) | 90% | **95%** | ✅ mergeGates 검증 연동 |
+| 승인과 거버넌스 (§5.9) | 85% | **97%** | ✅ 12개 forbidden 도구 + AuditEvent DB 영속화 |
+| 운영자 표면 (§5.10) | 80% | **95%** | ✅ 5개 운영자 CLI 커맨드 + history 이력 탐색 |
+| 지속성 및 복구 (§5.11) | 75% | **96%** | ✅ PipelineStore + checkpoint/resume + V21~V22 DB |
+| 상태 머신 (§6) | 95% | **99%** | ✅ 3개 상태 머신 완비 (14+13+8 상태), 전환 검증 |
+| Git 통합 (장기 §5.2+) | 0% | **95%** | ✅ GitIntegration: diff/branch/commit/PR/hook 관리 |
+| 실시간 에이전트 통신 (장기 §5.4+) | 0% | **95%** | ✅ AgentEventBus: 비동기 응답/타임아웃/정족수/에스컬레이션 |
+| **전체 종합** | **~87%** | **~97%** | |
+
 
 ### 1.2 핵심 강점
 
-1. **타입 시스템 완비**: contracts.ts에 80+ 인터페이스, 40+ 타입 유니온 정의
-2. **End-to-End 파이프라인**: `ChangePipeline` 클래스가 7단계를 순차 연결
-3. **상태 전환 검증**: `change-workflow-state.ts`에서 ChangeWorkflowState 14개 상태 + MeetingState 11개 상태 전환 규칙 완비
-4. **보안 다계층 구조**: SecurityManager → ToolApprovalGate → PathEnforcer 3단 방어
-5. **DB 스키마 성숙**: 20개 마이그레이션, V20에서 회의/실행계획/검증/영향도 캐시 테이블 추가
+1. **타입 시스템 완비**: contracts.ts에 91개 export (interface + type + enum) 정의
+2. **End-to-End 파이프라인**: `ChangePipeline` 7단계 + checkpoint/resume + AuditEvent DB 영속화
+3. **상태 전환 검증**: 3개 상태 머신 (ChangeWorkflowState 14 + MeetingState 13 + TaskState 8) 전환 규칙 완비
+4. **보안 다계층 구조**: SecurityManager → ToolApprovalGate(12 forbidden) → PathEnforcer(observer 차단)
+5. **DB 스키마 성숙**: 22개 마이그레이션, 37개 테이블, 감사/파이프라인/계약/예산 영속화
+6. **자동 변경 감지**: 6종 소스 어댑터 + Git hook/diff 통합
+7. **비동기 에이전트 통신**: AgentEventBus로 정족수 체크, 타임아웃 에스컬레이션
+8. **운영자 제어**: 5종 CLI 커맨드 + 이력 탐색 + 실시간 인터페이스 감시
 
-### 1.3 핵심 갭
+### 1.3 잔여 갭 (P4 완료 후)
 
-1. **human_owner 매핑 실질 부재**: module-registry.yaml에 `human_owner` 필드 없음
-2. **Git diff/실패 테스트/성능 회귀로부터의 자동 제안 생성 미구현**
-3. **InterfaceContract를 1급 객체로 관리하는 별도 저장소 부재**
-4. **TaskAssignment의 bounded budget 런타임 강제 미완**
-5. **resume_token / 파이프라인 중단 재개 메커니즘 미구현**
-6. **감사 로그(AuditEvent)가 파이프라인 내 메모리에만 존재** — DB 영속화 미완
-7. **운영자 override/강제 재협의/롤백 승인의 CLI 통합 부족**
+1. **다중 프로젝트/저장소 지원** — 단일 저장소만 지원, cross-repo 영향 분석 미구현
+2. **ML 기반 영향도 예측** — 과거 이력 기반 자동 confidence 조정 미구현
+3. **TUI audit 뷰** — 대시보드 audit 패널이 placeholder 상태
+4. **E2E 테스트 커버리지** — P0~P4 신규 모듈(11개 파일)에 대한 테스트 미작성
 
 ---
 

@@ -766,6 +766,34 @@ const migrations: Migration[] = [
         ON budget_tracking(status);
     `,
   },
+
+  // ─── v0.4.3: Iteration Cycle Tracking ─────────────────────────────────────
+  {
+    version: 23,
+    sql: `
+      ALTER TABLE team_runs ADD COLUMN iteration_count INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE IF NOT EXISTS iteration_cycles (
+        cycle_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        iteration_index INTEGER NOT NULL,
+        entry_state TEXT NOT NULL,
+        exit_state TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        reason_detail TEXT NOT NULL DEFAULT '',
+        proposal_id TEXT,
+        trigger_id TEXT,
+        evidence_links_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_iteration_cycles_run
+        ON iteration_cycles(run_id, iteration_index);
+      CREATE INDEX IF NOT EXISTS idx_iteration_cycles_session
+        ON iteration_cycles(session_id, created_at);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

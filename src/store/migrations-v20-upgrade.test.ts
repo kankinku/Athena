@@ -26,7 +26,7 @@ test("v20 migration creates change management tables on fresh DB", () => {
     runMigrations(db);
 
     const schemaVersion = db.prepare("SELECT MAX(version) AS version FROM _schema_version").get() as { version: number };
-    assert.equal(schemaVersion.version, 20);
+    assert.equal(schemaVersion.version, 23);
 
     // 신규 테이블 존재 확인
     const tables = ["meeting_sessions", "agent_positions", "approval_conditions",

@@ -199,8 +199,26 @@ export const dashboard = Command.make(
           }
 
           case "audit": {
-            console.log("Recent audit events:");
-            console.log("  (Use 'athena audit --recent' for full audit log)");
+            const { AuditEventStore } = await import("../research/audit-event-store.js");
+            const auditStore = new AuditEventStore();
+            const events = auditStore.listRecent(20);
+            if (events.length === 0) {
+              console.log("No recent audit events.");
+              break;
+            }
+            console.log("Recent Audit Events:");
+            for (const evt of events) {
+              const time = new Date(evt.timestamp).toISOString().slice(0, 19);
+              const proposal = evt.proposalId ? `  proposal=${evt.proposalId}` : "";
+              console.log(`  [${evt.severity}] ${time}  ${evt.eventType}${proposal}`);
+              if (evt.details && typeof evt.details === "object") {
+                const detail = Object.entries(evt.details as Record<string, unknown>)
+                  .slice(0, 3)
+                  .map(([k, v]) => `${k}=${v}`)
+                  .join(" ");
+                if (detail) console.log(`    ${detail}`);
+              }
+            }
             break;
           }
 

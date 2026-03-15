@@ -42,6 +42,7 @@ function createRun(id = "run-1"): TeamRunRecord {
       retryCount: 0,
       resumeCount: 0,
     },
+    iterationCount: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };

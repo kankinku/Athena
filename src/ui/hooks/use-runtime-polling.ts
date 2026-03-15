@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { AthenaRuntime } from "../../init.js";
 import { pollRuntimeTaskActivity } from "../../core/task-poller.js";
 import type { MachineResources } from "../../metrics/resources.js";
-import type { IngestionSourceRecord, TeamRunRecord } from "../../research/contracts.js";
+import type { IngestionSourceRecord, IterationCycleRecord, ProposalBrief, TeamRunRecord } from "../../research/contracts.js";
 import type { TaskInfo } from "../types.js";
 
 interface RuntimePollingState {
@@ -13,6 +13,8 @@ interface RuntimePollingState {
   metricData: Map<string, number[]>;
   resourceData: Map<string, MachineResources>;
   tasks: TaskInfo[];
+  iterationCycles: IterationCycleRecord[];
+  recentProposals: ProposalBrief[];
 }
 
 export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
@@ -35,6 +37,8 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
   const [latestIngestionSource, setLatestIngestionSource] = useState<IngestionSourceRecord | null>(null);
   const [openIncidentCount, setOpenIncidentCount] = useState(0);
   const [reviewQueueCount, setReviewQueueCount] = useState(0);
+  const [iterationCycles, setIterationCycles] = useState<IterationCycleRecord[]>([]);
+  const [recentProposals, setRecentProposals] = useState<ProposalBrief[]>([]);
 
   useEffect(() => {
     const poll = async () => {
@@ -74,15 +78,20 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
 
       const sessionId = orchestrator.currentSession?.id;
       if (sessionId) {
-        setActiveResearchRun(teamStore.listRecentTeamRuns(sessionId, 1)[0] ?? null);
+        const run = teamStore.listRecentTeamRuns(sessionId, 1)[0] ?? null;
+        setActiveResearchRun(run);
         setLatestIngestionSource(teamStore.listIngestionSources(sessionId)[0] ?? null);
         setOpenIncidentCount(teamStore.listOpenIncidents(sessionId).length);
         setReviewQueueCount(teamStore.listReviewQueue(sessionId).length);
+        setIterationCycles(run ? teamStore.listIterationCycles(run.id) : []);
+        setRecentProposals(teamStore.listProposalBriefs(sessionId).slice(0, 5));
       } else {
         setActiveResearchRun(null);
         setLatestIngestionSource(null);
         setOpenIncidentCount(0);
         setReviewQueueCount(0);
+        setIterationCycles([]);
+        setRecentProposals([]);
       }
     };
 
@@ -122,5 +131,7 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
     metricData,
     resourceData,
     tasks,
+    iterationCycles,
+    recentProposals,
   };
 }

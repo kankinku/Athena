@@ -6,6 +6,7 @@ import type {
   AutomationRuntimeState,
   CheckpointPolicy,
   ExperimentBudget,
+  IterationCycleRecord,
   RetryPolicy,
   TeamRunRecord,
   TeamRunStatus,
@@ -26,9 +27,26 @@ interface TeamRunRow {
   timeout_policy_json: string | null;
   automation_state_json: string | null;
   budget_json: string | null;
+  iteration_count: number;
   latest_output_json: string | null;
   created_at: number;
   updated_at: number;
+}
+
+interface IterationCycleRow {
+  cycle_id: string;
+  run_id: string;
+  session_id: string;
+  iteration_index: number;
+  entry_state: string;
+  exit_state: string;
+  reason: string;
+  reason_detail: string;
+  proposal_id: string | null;
+  trigger_id: string | null;
+  evidence_links_json: string;
+  created_at: number;
+  completed_at: number | null;
 }
 
 export interface TeamRunUpdateInput {
@@ -42,6 +60,7 @@ export interface TeamRunUpdateInput {
   automationState?: AutomationRuntimeState;
   latestOutput?: Record<string, unknown>;
   budget?: ExperimentBudget;
+  iterationCount?: number;
 }
 
 export class TeamRunStore {
@@ -55,8 +74,8 @@ export class TeamRunStore {
     const timeoutPolicy = defaultTimeoutPolicy();
     const automationState = defaultAutomationState(now, checkpointPolicy, timeoutPolicy);
     db.prepare(
-      `INSERT INTO team_runs (id, session_id, goal, current_stage, status, workflow_state, automation_policy_json, checkpoint_policy_json, retry_policy_json, timeout_policy_json, automation_state_json, budget_json, latest_output_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO team_runs (id, session_id, goal, current_stage, status, workflow_state, automation_policy_json, checkpoint_policy_json, retry_policy_json, timeout_policy_json, automation_state_json, budget_json, iteration_count, latest_output_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       sessionId,
@@ -70,6 +89,7 @@ export class TeamRunStore {
       JSON.stringify(timeoutPolicy),
       JSON.stringify(automationState),
       budget ? JSON.stringify(budget) : null,
+      0,
       null,
       now,
       now,
@@ -88,6 +108,7 @@ export class TeamRunStore {
       timeoutPolicy,
       automationState,
       budget,
+      iterationCount: 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -124,12 +145,13 @@ export class TeamRunStore {
       ),
       latestOutput: updates.latestOutput ?? current.latestOutput,
       budget: updates.budget ?? current.budget,
+      iterationCount: updates.iterationCount ?? current.iterationCount,
       updatedAt: now,
     };
 
     db.prepare(
       `UPDATE team_runs
-       SET current_stage = ?, status = ?, workflow_state = ?, automation_policy_json = ?, checkpoint_policy_json = ?, retry_policy_json = ?, timeout_policy_json = ?, automation_state_json = ?, budget_json = ?, latest_output_json = ?, updated_at = ?
+       SET current_stage = ?, status = ?, workflow_state = ?, automation_policy_json = ?, checkpoint_policy_json = ?, retry_policy_json = ?, timeout_policy_json = ?, automation_state_json = ?, budget_json = ?, iteration_count = ?, latest_output_json = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.currentStage,
@@ -141,6 +163,7 @@ export class TeamRunStore {
       JSON.stringify(next.timeoutPolicy),
       JSON.stringify(next.automationState),
       next.budget ? JSON.stringify(next.budget) : null,
+      next.iterationCount,
       next.latestOutput ? JSON.stringify(next.latestOutput) : null,
       next.updatedAt,
       id,
@@ -158,6 +181,56 @@ export class TeamRunStore {
        LIMIT ?`,
     ).all(sessionId, limit) as TeamRunRow[];
     return rows.map(mapTeamRun);
+  }
+
+  saveIterationCycle(sessionId: string, cycle: IterationCycleRecord): IterationCycleRecord {
+    const db = getDb();
+    db.prepare(
+      `INSERT OR REPLACE INTO iteration_cycles
+       (cycle_id, run_id, session_id, iteration_index, entry_state, exit_state, reason, reason_detail, proposal_id, trigger_id, evidence_links_json, created_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      cycle.cycleId,
+      cycle.runId,
+      sessionId,
+      cycle.iterationIndex,
+      cycle.entryState,
+      cycle.exitState,
+      cycle.reason,
+      cycle.reasonDetail,
+      cycle.proposalId ?? null,
+      cycle.triggerId ?? null,
+      JSON.stringify(cycle.evidenceLinks),
+      cycle.createdAt,
+      cycle.completedAt ?? null,
+    );
+    return cycle;
+  }
+
+  completeIterationCycle(cycleId: string, exitState: string): IterationCycleRecord | null {
+    const db = getDb();
+    const now = Date.now();
+    db.prepare(
+      `UPDATE iteration_cycles SET exit_state = ?, completed_at = ? WHERE cycle_id = ?`,
+    ).run(exitState, now, cycleId);
+    const row = db.prepare("SELECT * FROM iteration_cycles WHERE cycle_id = ?").get(cycleId) as IterationCycleRow | undefined;
+    return row ? mapIterationCycle(row) : null;
+  }
+
+  listIterationCycles(runId: string): IterationCycleRecord[] {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT * FROM iteration_cycles WHERE run_id = ? ORDER BY iteration_index ASC`,
+    ).all(runId) as IterationCycleRow[];
+    return rows.map(mapIterationCycle);
+  }
+
+  listSessionIterationCycles(sessionId: string): IterationCycleRecord[] {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT * FROM iteration_cycles WHERE session_id = ? ORDER BY created_at DESC`,
+    ).all(sessionId) as IterationCycleRow[];
+    return rows.map(mapIterationCycle);
   }
 }
 
@@ -191,6 +264,7 @@ function mapTeamRun(row: TeamRunRow): TeamRunRecord {
       )
       : defaultAutomationState(row.created_at, defaultCheckpointPolicy(), defaultTimeoutPolicy()),
     budget: row.budget_json ? (JSON.parse(row.budget_json) as ExperimentBudget) : undefined,
+    iterationCount: row.iteration_count ?? 0,
     latestOutput: row.latest_output_json
       ? (JSON.parse(row.latest_output_json) as Record<string, unknown>)
       : undefined,
@@ -285,5 +359,23 @@ function normalizeAutomationState(
     stageStartedAt: stageChanged
       ? now
       : state.stageStartedAt,
+  };
+}
+
+function mapIterationCycle(row: IterationCycleRow): IterationCycleRecord {
+  return {
+    cycleId: row.cycle_id,
+    runId: row.run_id,
+    sessionId: row.session_id,
+    iterationIndex: row.iteration_index,
+    entryState: row.entry_state as IterationCycleRecord["entryState"],
+    exitState: row.exit_state as IterationCycleRecord["exitState"],
+    reason: row.reason as IterationCycleRecord["reason"],
+    reasonDetail: row.reason_detail,
+    proposalId: row.proposal_id ?? undefined,
+    triggerId: row.trigger_id ?? undefined,
+    evidenceLinks: JSON.parse(row.evidence_links_json) as string[],
+    createdAt: row.created_at,
+    completedAt: row.completed_at ?? undefined,
   };
 }

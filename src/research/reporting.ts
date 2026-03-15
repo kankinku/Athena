@@ -72,12 +72,28 @@ export function buildResearchReportInput(
         (run) => {
           const workflowHistory = teamStore.listWorkflowTransitions(sessionId, run.id).slice(-4);
           return [
-            `- ${run.id}: goal=${run.goal}; stage=${run.currentStage}; workflow=${run.workflowState}; status=${run.status}`,
+            `- ${run.id}: goal=${run.goal}; stage=${run.currentStage}; workflow=${run.workflowState}; status=${run.status}; iterations=${run.iterationCount}`,
             workflowHistory.length > 0
               ? `  workflow_history: ${workflowHistory.map((entry) => `${entry.fromState}->${entry.toState}`).join(" | ")}`
               : null,
           ].filter(Boolean).join("\n");
         },
+      ),
+    );
+  }
+
+  const allIterationCycles = runs.flatMap((run) => teamStore.listIterationCycles(run.id));
+  if (allIterationCycles.length > 0) {
+    sections.push(
+      "## Iteration Cycles",
+      ...allIterationCycles.map(
+        (cycle) => [
+          `- ${cycle.cycleId}: run=${cycle.runId}; iteration=#${cycle.iterationIndex}; reason=${cycle.reason}`,
+          `  entry=${cycle.entryState}; exit=${cycle.exitState}; proposal=${cycle.proposalId ?? "n/a"}; trigger=${cycle.triggerId ?? "n/a"}`,
+          `  detail: ${cycle.reasonDetail}`,
+          cycle.evidenceLinks.length > 0 ? `  evidence: ${cycle.evidenceLinks.join(", ")}` : null,
+          cycle.completedAt ? `  completed_at=${new Date(cycle.completedAt).toISOString()}` : "  status=in_progress",
+        ].filter(Boolean).join("\n"),
       ),
     );
   }
@@ -107,6 +123,18 @@ export function buildResearchReportInput(
       "## Proposal Briefs",
       ...proposals.map((proposal) => {
         const score = proposal.scorecard?.decisionScore;
+        const topClaims = (() => {
+          const sources = teamStore.listIngestionSources(sessionId);
+          const allCanonical = sources.flatMap((source) => source.canonicalClaims ?? []);
+          const matched = proposal.claimIds
+            .map((claimId) => allCanonical.find((c) => c.canonicalClaimId === claimId || `/research/claims/${c.canonicalClaimId}` === claimId))
+            .filter((c): c is NonNullable<typeof c> => c != null)
+            .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+            .slice(0, 3);
+          return matched.length > 0
+            ? `  top_claims: ${matched.map((c) => `${c.canonicalClaimId}(conf=${(c.confidence ?? 0).toFixed(2)}) ${c.statement.slice(0, 60)}`).join(" | ")}`
+            : null;
+        })();
         return [
           `- ${proposal.proposalId}: ${proposal.title}`,
           `  summary: ${proposal.summary}`,
@@ -120,6 +148,13 @@ export function buildResearchReportInput(
             ? `  claim_support: evidence=${proposal.claimSupport.evidenceStrength.toFixed(2)} freshness=${proposal.claimSupport.freshnessScore.toFixed(2)} contradiction=${proposal.claimSupport.contradictionPressure.toFixed(2)} uncovered=${proposal.claimSupport.unresolvedClaims.length}`
             : null,
           `  evidence_health: ${formatEvidenceHealth(teamStore.buildEvidenceHealth(sessionId, proposal.proposalId))}`,
+          topClaims,
+          (() => {
+            const proposalHealth = teamStore.buildEvidenceHealth(sessionId, proposal.proposalId);
+            return proposalHealth.coverageGaps.length > 0
+              ? `  evidence_coverage_gap: ${proposalHealth.coverageGaps.join(", ")}`
+              : `  evidence_coverage_gap: none`;
+          })(),
           proposal.scorecard
             ? `  weighted_score: ${proposal.scorecard.weightedScore}`
             : null,

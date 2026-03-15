@@ -1,194 +1,20 @@
-# 파일럿 적용 계획 (Pilot Review)
+# Pilot Review
 
-이 문서는 모듈 협의 시스템의 1차 파일럿 적용 계획을 정의한다. 파일럿은 Athena 프로젝트 자체를 대상으로 진행한다.
+This document defines how to review Athena in an early end-to-end pilot.
 
----
+## Pilot Goal
 
-## 15.1 파일럿 대상 모듈
+Prove that Athena can:
+- take a real goal
+- iterate through multiple improvement steps
+- preserve evidence and state
+- recover from routine failure
+- remain governable by an operator
 
-상호 의존성이 높고 변경 빈도가 높은 5개 모듈을 선정:
+## What To Look For
 
-| 모듈 | 선정 이유 | 의존 관계 |
-|------|-----------|-----------|
-| `store` | 모든 모듈의 기반 | 모든 모듈이 의존 |
-| `research` | 가장 복잡한 도메인 로직 | store에 의존, cli/ui가 의존 |
-| `cli` | 운영자 인터페이스 | research, store, impact에 의존 |
-| `impact` | 신규 핵심 모듈 | store에 의존, cli가 의존 |
-| `ui` | 시각적 피드백 | research, store에 의존 |
-
----
-
-## 15.2 실제 변경 제안 3회 이상 생성 및 검증
-
-### 파일럿 변경 1: 임팩트 모듈 최초 등록
-
-**목적**: 신규 `src/impact/` 모듈을 레지스트리에 등록하고 change proposal 생성 연습
-
-**예상 흐름**:
-```
-1. config/module-registry.yaml에 impact 모듈 추가
-2. athena proposal create → cp_pilot_001
-3. Impact: impact 직접, cli 간접
-4. 회의: impact-agent + cli-agent 소집
-5. 합의: approved
-6. 실행: 신규 코드 통합 테스트
-7. 검증: Impact 정확도 테스트 통과
-```
-
-### 파일럿 변경 2: DB 마이그레이션 추가 (Migration v20)
-
-**목적**: DB 스키마 변경 전체 플로우 검증 (가장 엄격한 케이스)
-
-**예상 흐름**:
-```
-1. src/store/migrations.ts에 v20 추가 (meeting_sessions 등)
-2. athena proposal create → cp_pilot_002
-3. Impact: store 직접, research/cli/ui 간접
-4. 회의: store-agent + research-agent (필수), cli-agent (조건부)
-5. 충돌 예상: research-agent → MeetingStore 구현 선행 요구
-6. 합의: conditionally-approved (조건: MeetingStore 구현)
-7. 조건 달성 확인 후 실행
-8. 검증: migrations-upgrade.test.ts 통과
-```
-
-### 파일럿 변경 3: contracts.ts 타입 확장
-
-**목적**: 공용 인터페이스 변경 플로우 검증
-
-**예상 흐름**:
-```
-1. src/research/contracts.ts에 새 타입 추가
-2. Impact: research 직접, cli/ui 간접
-3. 회의: research-agent + cli-agent (필수)
-4. 합의: approved (선택적 필드면) 또는 conditionally-approved
-5. 실행 후 tsc --noEmit 통과 확인
-6. 검증: 전체 테스트 통과
-```
-
----
-
-## 15.3 회의 품질 점검
-
-파일럿 후 다음 사항을 점검한다:
-
-### 불필요한 소집이 많은지
-
-```
-점검 기준:
-- 실제로 발언한 간접 영향 에이전트 비율 > 50%
-  (낮으면: 소집 조건이 너무 관대함 → 규칙 강화)
-- 옵저버 에이전트가 실질적 의견 제시 비율 < 10%
-  (높으면: 옵저버 범위가 너무 좁음 → 확대)
-
-측정:
-athena meeting stats --pilot
-```
-
-### 필요한 오너가 누락되는지
-
-```
-점검 기준:
-- 검증 실패의 원인이 회의에 참석하지 않은 에이전트인 경우
-  (있으면: 영향도 분석 알고리즘 개선 필요)
-- 사후에 "이 에이전트도 포함했어야 했다"는 피드백
-
-측정: 재협의 발생 원인 분석
-```
-
-### 충돌 해결이 실제로 되는지
-
-```
-점검 기준:
-- 충돌이 발생한 회의 중 해결 완료 비율 > 70%
-  (낮으면: 충돌 해결 규칙 강화 또는 진행자 역할 개선)
-- 평균 회의 라운드 수 < 4
-  (높으면: 회의 프로토콜 효율화 필요)
-```
-
----
-
-## 15.4 실행 품질 점검
-
-### 수정 범위가 잘 제한되는지
-
-```
-점검 기준:
-- 경로 위반 시도 100% 차단됨
-- 에이전트가 allowedPaths 밖의 파일 수정 시도 = 0
-
-측정:
-athena audit --type path_violation --pilot
-```
-
-### 테스트가 충분한지
-
-```
-점검 기준:
-- 검증 실패로 인한 재협의 발생 시 해당 테스트가 required_tests에 있었는지
-  (없었으면: 테스트 커버리지 개선 필요)
-
-측정: 검증 실패 케이스 분석
-```
-
-### 롤백이 정상 동작하는지
-
-```
-파일럿 중 의도적 실패 주입:
-1. 시뮬레이션된 테스트 실패 → remeeting 트리거 확인
-2. 의도적 경로 위반 → 차단 확인
-3. 타임아웃 주입 → on-hold 전환 확인
-4. 실행 오류 시뮬레이션 → 롤백 확인
-```
-
----
-
-## 15.5 튜닝 항목
-
-파일럿 결과에 따라 조정할 규칙들:
-
-### 회의 규칙 튜닝
-
-```
-- 조건부 소집 임계값 (현재: 간접 영향 모두 → 조건에 따라 일부만)
-- 회의 타임아웃 (현재: 60분 → 실제 평균 기반 조정)
-- 정족수 규칙 (현재: 직접 영향 전원 필수 → 완화 가능?)
-```
-
-### 영향도 규칙 튜닝
-
-```
-- 공용 인터페이스 파일 감지 기준 (현재: contracts.ts, index.ts 등)
-- 간접→옵저버 전환 깊이 (현재: depth 1 = indirect, 2+ = observer)
-```
-
-### 승인 규칙 튜닝
-
-```
-- 자동 실행 허용 기준 (현재: low/medium 위험도, 단일 모듈만)
-- 운영자 승인 필수 조건 목록
-```
-
----
-
-## 15.6 파일럿 결과 예상 메트릭
-
-| 메트릭 | 목표값 | 측정 방법 |
-|--------|--------|-----------|
-| 영향 모듈 식별 정확도 | 100% (3개 시나리오) | 수동 비교 |
-| 필요 에이전트 누락률 | 0% | 재협의 원인 분석 |
-| 회의 완료율 | > 90% | athena meeting stats |
-| 평균 회의 라운드 | < 4 | athena meeting stats |
-| 검증 통과율 (1차) | > 70% | 검증 결과 집계 |
-| 경로 위반 차단율 | 100% | 감사 로그 |
-
----
-
-## 파일럿 완료 기준
-
-다음을 모두 달성하면 파일럿이 완료된 것으로 간주한다:
-
-1. ✅ 5개 파일럿 모듈 모두 레지스트리에 등록됨
-2. ✅ 3개 이상 실제 change proposal 전체 흐름 완료
-3. ✅ 모든 성공 기준 (docs/success-criteria.md) 달성
-4. ✅ 회의 규칙, 영향도 규칙, 승인 규칙 튜닝 완료
-5. ✅ 파일럿 결과 문서화 완료
+- does Athena stay aligned with the goal
+- does it propose useful next moves
+- does it evaluate outcomes rather than just generate activity
+- can operators understand the state quickly
+- do failures remain recoverable

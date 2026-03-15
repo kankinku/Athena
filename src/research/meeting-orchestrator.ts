@@ -26,6 +26,7 @@ import {
 import type { ImpactAnalysisResult } from "../impact/impact-analyzer.js";
 import { ExecutionGate } from "./execution-gate.js";
 import { ConflictDetector } from "./conflict-detector.js";
+import { AgentEventBus } from "./agent-event-bus.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,11 +52,18 @@ export class MeetingOrchestrator {
   private meetingStore: MeetingStore;
   private executionGate: ExecutionGate;
   private conflictDetector: ConflictDetector;
+  private agentEventBus: AgentEventBus;
 
-  constructor(meetingStore?: MeetingStore, executionGate?: ExecutionGate, conflictDetector?: ConflictDetector) {
+  constructor(
+    meetingStore?: MeetingStore,
+    executionGate?: ExecutionGate,
+    conflictDetector?: ConflictDetector,
+    agentEventBus?: AgentEventBus,
+  ) {
     this.meetingStore = meetingStore ?? new MeetingStore();
     this.executionGate = executionGate ?? new ExecutionGate();
     this.conflictDetector = conflictDetector ?? new ConflictDetector();
+    this.agentEventBus = agentEventBus ?? new AgentEventBus();
   }
 
   /**
@@ -100,6 +108,13 @@ export class MeetingOrchestrator {
 
     this.meetingStore.saveMeetingSession(session);
 
+    // AgentEventBus: 라운드 1 응답 대기 시작
+    this.agentEventBus.broadcast(meetingId, "meeting:scheduled", {
+      proposalId,
+      mandatoryAgents: uniqueMandatory,
+      conditionalAgents: uniqueConditional,
+    });
+
     return {
       meetingId,
       mandatoryAgents: uniqueMandatory,
@@ -108,6 +123,36 @@ export class MeetingOrchestrator {
       readOnlyAgents: uniqueObservers, // observer = read-only
       responseDeadlineAt: now + responseTimeoutMs,
     };
+  }
+
+  /**
+   * AgentEventBus를 통해 라운드 응답을 비동기 대기한다.
+   * 타임아웃 시 미응답 에이전트는 자동 기권 처리.
+   */
+  async waitForRoundResponses(
+    meetingId: string,
+    round: number,
+    timeoutMs?: number,
+  ): Promise<AgentPositionRecord[]> {
+    const meeting = this.meetingStore.getMeetingSession(meetingId);
+    if (!meeting) return [];
+
+    const expectedAgents = [...meeting.mandatoryAgents, ...meeting.conditionalAgents];
+    const responses = await this.agentEventBus.waitForResponses(
+      meetingId,
+      round,
+      expectedAgents,
+      timeoutMs,
+    );
+
+    // 타임아웃된 에이전트 기권 처리
+    const responded = new Set(responses.map((r) => r.agentId));
+    const absent = expectedAgents.filter((a) => !responded.has(a));
+    if (absent.length > 0) {
+      this.forfeitAbsentAgents(meetingId, absent);
+    }
+
+    return responses;
   }
 
   /**
@@ -138,10 +183,22 @@ export class MeetingOrchestrator {
     const nextState: MeetingState = `round-${nextRound}` as MeetingState;
     assertValidMeetingTransition(meeting.state, nextState);
 
-    return this.meetingStore.updateMeetingState(meetingId, nextState, {
+    const updated = this.meetingStore.updateMeetingState(meetingId, nextState, {
       currentRound: nextRound,
       startedAt: meeting.startedAt ?? Date.now(),
     });
+
+    // AgentEventBus: 라운드 진행 이벤트 발행
+    this.agentEventBus.publish({
+      eventId: `evt_adv_${meetingId}_${nextRound}`,
+      type: "round:advance",
+      meetingId,
+      round: nextRound,
+      payload: { previousRound: meeting.currentRound },
+      timestamp: Date.now(),
+    });
+
+    return updated;
   }
 
   /**
@@ -224,6 +281,16 @@ export class MeetingOrchestrator {
       executionPlanId: executionPlan?.executionPlanId,
       completedAt: now,
     });
+
+    // AgentEventBus: 회의 완료 이벤트 + 리소스 정리
+    this.agentEventBus.publish({
+      eventId: `evt_done_${meetingId}`,
+      type: "meeting:complete",
+      meetingId,
+      payload: { consensusType },
+      timestamp: now,
+    });
+    this.agentEventBus.cleanup(meetingId);
 
     return {
       consensusType,

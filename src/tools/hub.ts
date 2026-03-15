@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ToolDefinition } from "../providers/types.js";
 import type { HubClient } from "../hub/client.js";
 import type { RemoteExecutor } from "../remote/executor.js";
@@ -42,7 +44,9 @@ function createHubPushTool(client: HubClient, executor: RemoteExecutor): ToolDef
         const head = headResult.stdout.trim();
 
         // Create bundle
-        const bundlePath = `/tmp/athena-bundle-${randomBytes(6).toString("hex")}.bundle`;
+        const bundlePath = machineId === "local"
+          ? join(tmpdir(), `athena-bundle-${randomBytes(6).toString("hex")}.bundle`)
+          : `/tmp/athena-bundle-${randomBytes(6).toString("hex")}.bundle`;
         const range = parentHash ? `${shellQuote(parentHash)}..HEAD` : "HEAD";
         const bundleCmd = `cd ${shellQuote(repoPath)} && git bundle create ${bundlePath} ${range}`;
         const bundleResult = await executor.exec(machineId, bundleCmd);
@@ -103,7 +107,9 @@ function createHubFetchTool(client: HubClient, executor: RemoteExecutor): ToolDe
 
       try {
         const bundle = await client.fetchBundle(hash);
-        const bundlePath = `/tmp/athena-fetch-${randomBytes(6).toString("hex")}.bundle`;
+        const bundlePath = machineId === "local"
+          ? join(tmpdir(), `athena-fetch-${randomBytes(6).toString("hex")}.bundle`)
+          : `/tmp/athena-fetch-${randomBytes(6).toString("hex")}.bundle`;
 
         if (machineId === "local") {
           writeFileSync(bundlePath, bundle);

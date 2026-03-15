@@ -9,6 +9,7 @@ import {
   getLocalShell,
   getLocalShellCommand,
 } from "./local-runtime.js";
+import { execDocker, isDockerAvailable, type DockerRuntimeConfig } from "./docker-runtime.js";
 import type { SecurityExecutionContext, SecurityManager } from "../security/policy.js";
 import type {
   RemoteMachine,
@@ -61,6 +62,8 @@ function decodeLocalShellOutput(value: string | Buffer | null | undefined, platf
 export class ConnectionPool {
   private connections = new Map<string, PooledConnection>();
   private machines = new Map<string, RemoteMachine>();
+  private dockerConfig?: DockerRuntimeConfig;
+  private dockerAvailable?: boolean;
 
   constructor(private securityManager?: SecurityManager) {
     // Always register the local machine
@@ -72,6 +75,19 @@ export class ConnectionPool {
       lastUsedAt: Date.now(),
       reconnectAttempts: 0,
     });
+  }
+
+  /**
+   * Enable Docker-based execution for local commands.
+   * When enabled, `exec("local", ...)` uses a disposable Docker container
+   * instead of the host shell — eliminating platform-specific issues on Windows.
+   */
+  async enableDocker(config: DockerRuntimeConfig = {}): Promise<boolean> {
+    this.dockerAvailable = await isDockerAvailable();
+    if (this.dockerAvailable) {
+      this.dockerConfig = config;
+    }
+    return this.dockerAvailable;
   }
 
   addMachine(machine: RemoteMachine): void {
@@ -174,6 +190,9 @@ export class ConnectionPool {
     this.securityManager?.assertCommandAllowed(command, { ...securityContext, machineId });
 
     if (machineId === "local") {
+      if (this.dockerAvailable && this.dockerConfig) {
+        return execDocker(command, this.dockerConfig, timeoutMs);
+      }
       return this.execLocal(command, timeoutMs);
     }
     return this.execRemoteUnchecked(machineId, command);

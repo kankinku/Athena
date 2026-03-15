@@ -14,6 +14,7 @@ import type {
   ImprovementEvaluationRecord,
   ImprovementReviewAction,
   ImprovementProposalRecord,
+  IterationCycleRecord,
   ProposalReviewAction,
   ProposalBrief,
   ProposalScorecard,
@@ -526,6 +527,22 @@ export class TeamStore {
 
   listRecentTeamRuns(sessionId: string, limit = 5): TeamRunRecord[] {
     return this.teamRunStore.listRecentTeamRuns(sessionId, limit);
+  }
+
+  saveIterationCycle(sessionId: string, cycle: IterationCycleRecord): IterationCycleRecord {
+    return this.teamRunStore.saveIterationCycle(sessionId, cycle);
+  }
+
+  completeIterationCycle(cycleId: string, exitState: string): IterationCycleRecord | null {
+    return this.teamRunStore.completeIterationCycle(cycleId, exitState);
+  }
+
+  listIterationCycles(runId: string): IterationCycleRecord[] {
+    return this.teamRunStore.listIterationCycles(runId);
+  }
+
+  listSessionIterationCycles(sessionId: string): IterationCycleRecord[] {
+    return this.teamRunStore.listSessionIterationCycles(sessionId);
   }
 
   clearAutomationBlock(runId: string): TeamRunRecord | null {

@@ -82,7 +82,7 @@ test("runMigrations upgrades a pre-workflow research schema to the latest resear
     const ingestionColumns = db.prepare("PRAGMA table_info(ingestion_sources)").all() as Array<{ name: string }>;
 
     const schemaVersion = db.prepare("SELECT MAX(version) AS version FROM _schema_version").get() as { version: number };
-    assert.equal(schemaVersion.version, 20);
+    assert.equal(schemaVersion.version, 23);
 
     assert.ok(teamRunColumns.some((column) => column.name === "workflow_state"));
     assert.ok(teamRunColumns.some((column) => column.name === "automation_policy_json"));

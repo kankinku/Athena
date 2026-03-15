@@ -7,7 +7,7 @@ import { Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
 const view = Args.text({ name: "view" }).pipe(
-  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|queue|incidents|journal|operate|evals|checklist|soak|next-actions"),
+  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|queue|incidents|journal|operate|evals|checklist|soak|next-actions|git-notify|iterations"),
 );
 
 const target = Args.text({ name: "target" }).pipe(
@@ -102,7 +102,31 @@ export const research = Command.make(
         switch (view) {
           case "runs": {
             const runs = runtime.teamStore.listRecentTeamRuns(resolvedSessionId, 20);
-            printLines(runs.map((run) => `${run.id}  stage=${run.currentStage.padEnd(10)} workflow=${run.workflowState.padEnd(11)} status=${run.status.padEnd(10)} ${run.goal}`));
+            printLines(runs.map((run) => `${run.id}  stage=${run.currentStage.padEnd(10)} workflow=${run.workflowState.padEnd(11)} status=${run.status.padEnd(10)} iter=${run.iterationCount} ${run.goal}`));
+            return;
+          }
+          case "iterations": {
+            if (target) {
+              const cycles = runtime.teamStore.listIterationCycles(target);
+              if (cycles.length === 0) {
+                printLines([`No iteration cycles for run: ${target}`]);
+                return;
+              }
+              printLines(cycles.map((cycle) => [
+                `#${cycle.iterationIndex}  ${cycle.reason.padEnd(36)} ${cycle.entryState}->${cycle.exitState}`,
+                `  proposal=${cycle.proposalId ?? "n/a"} trigger=${cycle.triggerId ?? "n/a"}`,
+                `  detail: ${cycle.reasonDetail}`,
+                cycle.evidenceLinks.length > 0 ? `  evidence: ${cycle.evidenceLinks.slice(0, 3).join(", ")}` : null,
+                cycle.completedAt ? `  completed=${new Date(cycle.completedAt).toISOString()}` : "  status=in_progress",
+              ].filter(Boolean).join("\n")));
+              return;
+            }
+            const cycles = runtime.teamStore.listSessionIterationCycles(resolvedSessionId);
+            if (cycles.length === 0) {
+              printLines(["No iteration cycles in this session."]);
+              return;
+            }
+            printLines(cycles.map((cycle) => `${cycle.cycleId}  run=${cycle.runId} #${cycle.iterationIndex} ${cycle.reason.padEnd(36)} ${cycle.entryState}->${cycle.exitState}  ${cycle.reasonDetail.slice(0, 60)}`));
             return;
           }
           case "workflow": {
@@ -147,6 +171,37 @@ export const research = Command.make(
             const proposals = runtime.teamStore
               .listProposalBriefs(resolvedSessionId)
               .filter((proposal) => (state ? proposal.status === state : true));
+            if (target) {
+              const proposal = proposals.find((p) => p.proposalId === target);
+              if (!proposal) {
+                console.error(`No proposal found: ${target}`);
+                process.exit(1);
+              }
+              const health = runtime.teamStore.buildEvidenceHealth(resolvedSessionId, proposal.proposalId);
+              const decisions = runtime.teamStore.listDecisionRecords(resolvedSessionId).filter((d) => d.proposalId === proposal.proposalId);
+              const sources = runtime.teamStore.listIngestionSources(resolvedSessionId);
+              const linkedSources = sources.filter((s) => (s.canonicalClaims ?? []).some((c) => proposal.claimIds.includes(c.canonicalClaimId) || proposal.claimIds.includes(`/research/claims/${c.canonicalClaimId}`)));
+              printLines([
+                `${proposal.proposalId}  ${proposal.status}  ${proposal.title}`,
+                `summary  ${proposal.summary}`,
+                `expected_gain  ${proposal.expectedGain}`,
+                `expected_risk  ${proposal.expectedRisk}`,
+                `target_modules  ${proposal.targetModules.join(", ") || "n/a"}`,
+                `code_change_scope  ${proposal.codeChangeScope.join(", ") || "n/a"}`,
+                `score  decision=${proposal.scorecard?.decisionScore ?? "n/a"} weighted=${proposal.scorecard?.weightedScore ?? "n/a"}`,
+                proposal.claimSupport
+                  ? `claim_support  evidence=${proposal.claimSupport.evidenceStrength.toFixed(2)} freshness=${proposal.claimSupport.freshnessScore.toFixed(2)} contradiction=${proposal.claimSupport.contradictionPressure.toFixed(2)} unresolved=${proposal.claimSupport.unresolvedClaims.length}`
+                  : "claim_support  n/a",
+                `evidence_health  evidence=${health.evidenceStrength.toFixed(2)} model=${health.modelConfidence.toFixed(2)} separation=${health.confidenceSeparation.toFixed(2)}`,
+                `evidence_coverage_gap  ${health.coverageGaps.join(", ") || "none"}`,
+                `claims  ${proposal.claimIds.join(", ") || "n/a"}`,
+                ...linkedSources.map((s) => `source  ${s.sourceId} ${s.sourceType} ${s.title} claims=${s.canonicalClaims?.length ?? 0}`),
+                ...decisions.map((d) => `decision  ${d.decisionId} ${d.decisionType} confidence=${d.confidence.toFixed(2)} ${d.decisionSummary}`),
+                `stop_conditions  ${proposal.stopConditions.join(" | ") || "n/a"}`,
+                `reconsider_conditions  ${proposal.reconsiderConditions.join(" | ") || "n/a"}`,
+              ]);
+              return;
+            }
             printLines(proposals.map((proposal) => `${proposal.proposalId}  ${proposal.status.padEnd(14)} score=${proposal.scorecard?.decisionScore ?? "n/a"} evidence=${proposal.claimSupport?.evidenceStrength?.toFixed(2) ?? "n/a"} freshness=${proposal.claimSupport?.freshnessScore?.toFixed(2) ?? "n/a"} contradiction=${proposal.claimSupport?.contradictionPressure?.toFixed(2) ?? "n/a"}  ${proposal.title}`));
             return;
           }
@@ -569,6 +624,54 @@ export const research = Command.make(
               process.exit(1);
             }
             console.log(runtime.graphMemory.formatSubgraph([target], 1, 12));
+            return;
+          }
+          case "git-notify": {
+            const event = target; // post-commit | pre-push
+            if (!event || !["post-commit", "pre-push"].includes(event)) {
+              console.error("Usage: athena research git-notify <post-commit|pre-push>");
+              process.exit(1);
+            }
+            const { GitIntegration } = await import("../research/git-integration.js");
+            const { ChangeDetector } = await import("../research/change-detector.js");
+            const { AuditEventStore } = await import("../research/audit-event-store.js");
+
+            const gitIntegration = new GitIntegration();
+            const auditEventStore = new AuditEventStore();
+            const changeDetector = new ChangeDetector({ auditStore: auditEventStore });
+
+            const result = await gitIntegration.detectPostCommitChanges();
+            if (!result) {
+              console.log("No changes detected.");
+              return;
+            }
+
+            // 감사 이벤트 저장
+            auditEventStore.save(result.auditEvent);
+
+            // Git diff → DetectedChange → ChangeProposal
+            const change = changeDetector.fromGitDiff(result.changedFiles.join("\n"));
+            if (!change) {
+              console.log("No actionable changes.");
+              return;
+            }
+
+            const proposal = changeDetector.createProposalFromChange(resolvedSessionId, change);
+            if (proposal) {
+              printLines([
+                `event  ${event}`,
+                `commit  ${result.commitInfo.hash.slice(0, 8)} ${result.commitInfo.message}`,
+                `files  ${result.changedFiles.length}`,
+                `proposal  ${proposal.proposalId} ${proposal.title}`,
+              ]);
+            } else {
+              printLines([
+                `event  ${event}`,
+                `commit  ${result.commitInfo.hash.slice(0, 8)} ${result.commitInfo.message}`,
+                `files  ${result.changedFiles.length}`,
+                `proposal  (duplicate — skipped)`,
+              ]);
+            }
             return;
           }
           default:

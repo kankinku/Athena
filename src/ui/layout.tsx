@@ -17,6 +17,7 @@ import type { AthenaRuntime } from "../init.js";
 import type { Attachment } from "../providers/types.js";
 import { StickyNotesPanel } from "./panels/sticky-notes.js";
 import { ResearchStatusPanel } from "./panels/research-status.js";
+import { ResearchDetailPanel } from "./panels/research-detail.js";
 import { VERSION, checkForUpdate } from "../version.js";
 import { useChatSession } from "./hooks/use-chat-session.js";
 import { useRuntimePolling } from "./hooks/use-runtime-polling.js";
@@ -61,6 +62,8 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     resourceData,
     reviewQueueCount,
     tasks,
+    iterationCycles,
+    recentProposals,
   } = useRuntimePolling(runtime);
 
   useEffect(() => {
@@ -258,6 +261,11 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
           openIncidentCount={openIncidentCount}
           reviewQueueCount={reviewQueueCount}
           securityMode={securityManager.getStatus().mode}
+          width={width - 2}
+        />
+        <ResearchDetailPanel
+          iterations={iterationCycles}
+          proposals={recentProposals}
           width={width - 2}
         />
       </Box>

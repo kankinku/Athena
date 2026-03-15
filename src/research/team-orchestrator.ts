@@ -20,6 +20,8 @@ import type {
   ExperimentLineageRecord,
   ExperimentBudget,
   ExperimentResult,
+  IterationCycleRecord,
+  IterationCycleReason,
   ProposalBrief,
   ResearchCandidatePack,
   RetryPolicy,
@@ -470,6 +472,20 @@ export class TeamOrchestrator {
         },
       },
     );
+
+    // Auto-cascade iteration when decision is revisit and automation allows it
+    if (decision.decisionType === "revisit") {
+      const cascadeResult = this.cascadeIteration(runId, {
+        reason: "simulation_regression",
+        reasonDetail: `simulation ${result.experimentId} outcome=${result.outcomeStatus} triggered revisit`,
+        proposalId: result.proposalId,
+        evidenceLinks: proposal?.claimIds,
+      });
+      if (cascadeResult && cascadeResult.workflowState === "running") {
+        return cascadeResult;
+      }
+    }
+
     return this.teamStore.updateTeamRun(runId, {
       status: nextStatus,
       latestOutput: {
@@ -498,6 +514,89 @@ export class TeamOrchestrator {
       });
     }
     return rolledBack;
+  }
+
+  /**
+   * Cascade an iteration: transition a run from revisit_due back to the
+   * collection stage, incrementing the iteration counter and recording
+   * an IterationCycleRecord for audit/reporting.
+   */
+  cascadeIteration(
+    runId: string,
+    options: {
+      reason: IterationCycleReason;
+      reasonDetail: string;
+      proposalId?: string;
+      triggerId?: string;
+      evidenceLinks?: string[];
+    },
+  ): TeamRunRecord | null {
+    const run = this.teamStore.getTeamRun(runId);
+    if (!run) return null;
+    if (run.workflowState !== "revisit_due") return null;
+
+    const maxIterations = run.budget?.maxIterations ?? 10;
+    if (run.iterationCount >= maxIterations) {
+      this.teamStore.noteAutomationBlock(
+        runId,
+        "revisit",
+        `iteration limit reached (${run.iterationCount}/${maxIterations})`,
+      );
+      return run;
+    }
+
+    const nextIteration = run.iterationCount + 1;
+    const sessionId = run.sessionId;
+
+    const cycle: IterationCycleRecord = {
+      cycleId: `iter-${runId}-${nextIteration}`,
+      runId,
+      sessionId,
+      iterationIndex: nextIteration,
+      entryState: run.workflowState,
+      exitState: "approved",
+      reason: options.reason,
+      reasonDetail: options.reasonDetail,
+      proposalId: options.proposalId,
+      triggerId: options.triggerId,
+      evidenceLinks: options.evidenceLinks ?? [],
+      createdAt: Date.now(),
+    };
+    this.teamStore.saveIterationCycle(sessionId, cycle);
+
+    this.teamStore.transitionWorkflow(runId, "approved", `iteration cascade #${nextIteration}: ${options.reasonDetail}`, {
+      metadata: {
+        iterationIndex: nextIteration,
+        reason: options.reason,
+        proposalId: options.proposalId,
+        triggerId: options.triggerId,
+      },
+    });
+
+    this.teamStore.transitionWorkflow(runId, "running", `iteration #${nextIteration} started — re-entering collection`, {
+      currentStage: "collection",
+      metadata: { iterationIndex: nextIteration },
+    });
+
+    const updated = this.teamStore.updateTeamRun(runId, {
+      iterationCount: nextIteration,
+      status: "active",
+      latestOutput: {
+        ...(run.latestOutput ?? {}),
+        iterationIndex: nextIteration,
+        iterationReason: options.reason,
+      },
+    });
+
+    this.graphMemory.upsertNode({
+      id: `/research/runs/${runId}`,
+      label: run.goal,
+      gist: `iteration #${nextIteration}: ${options.reasonDetail}`,
+      kind: "note",
+      content: JSON.stringify(updated, null, 2),
+    });
+
+    return updated;
   }
 
   configureAutomation(

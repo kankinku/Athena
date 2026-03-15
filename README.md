@@ -1,43 +1,121 @@
 # Athena
 
 > [!CAUTION]
-> **Important:** Athena does not currently have a permissions/security model. The agent runs basically unrestricted. You are responsible for any losses of data/other adverse outcomes from running it. If you have stuff you care about, then back it up (whether or not you use Athena, backing up is a good idea!), run Athena in a container, or wait until it has a permissions system.
+> Athena includes policy enforcement and a security floor, but it does not yet have a fully hardened production permissions model. Treat it as strong-beta software. Use isolated workspaces, backups, and containers for anything important.
 
-![Athena screenshot](https://raw.githubusercontent.com/snoglobe/athena/main/media/screnshot.png)
+**Version:** 0.2.1 · **Status:** Internal Beta (v0.3 target) · **Node.js 20+** required
 
-An autonomous research agent inspired by [Andrej Karpathy's 'autoresearch'](https://github.com/karpathy/autoresearch). Autoresearch works very well within Athena, just have to tune the prompt slightly.
+Athena is a terminal-native autonomous research system.
 
-It can operate seamlessly over SSH (even multiple machines), keeps the model in a loop, has tools to view/compare metrics, shows metrics directly in the UI, and has a memory system. 
+Its purpose is to keep running a goal-directed improvement loop:
 
-You can leave it to work overnight and don't have to worry about it exiting the loop early to stupidly ask you something or because it has to wait for something. And hopefully you'll wake up to results.
+```text
+goal → collect evidence → propose improvement → execute → evaluate → redesign → repeat
+```
 
-## Current Status
+## One-Line Definition
 
-Athena is currently in a `v0.3` release-hardening state as a:
+Athena is a terminal-native autonomous research system that uses Claude or OpenAI models to plan, execute, evaluate, and redesign improvements across local and remote machines.
 
-`stable operator-supervised research system`
+## What Athena Actually Is
 
-Today, that means the repo already includes:
+Athena is not just a chat interface, not just a coding agent, and not just a paper-research tool.
 
-- structured research state with canonical claims, proposal scoring, workflow history, automation policy, and self-improvement records
-- operator-facing control surfaces for inspection, approval, review, and reporting
-- safety rails for persistence, migrations, automation gates, CLI/report regressions, simulation launch failures, and automation recovery
-- cross-platform local execution support, Windows shell/temp-path handling, and remote sync fallback to `scp` when `rsync` is unavailable on Windows
-- release-hardening coverage for auth, provider helpers, remote execution, ACP tools, TUI panels, Windows regressions, and end-to-end research flows
+It is a loop runner.
 
-In practical terms, Athena should be read as:
+You give Athena a target. Athena gathers evidence, proposes the next improvement, executes or simulates the change, evaluates the result, updates its understanding, and decides what to try next. It keeps doing that until it converges, hits a policy boundary, or is stopped.
 
-- strong beta / limited release software for operator-supervised research work
-- suitable for local use and small-team technical evaluation
-- not yet a fully hardened production system for unrestricted deployment
+**Research exists to improve the loop.** Athena reads documents, URLs, code, metrics, reports, and prior runs because they can justify a better next move. The point is not "do research." The point is "use research to improve the target system."
 
-The biggest current limitation is still the missing permissions/security model. The second largest is that remote-machine validation is strong at the orchestration-path level, but not yet equivalent to broad real-world multi-host production soak testing.
+**The orchestrator exists to keep the loop pointed at the goal.** It decides what kind of work should happen next, what evidence matters, when to pause, when to retry, and when to escalate.
 
-If you want the exact release boundary for this milestone, see:
+`autoresearch` inside Athena means structured self-improvement:
 
-- `docs/release-readiness-v0.3.md`
-- `docs/pr-summary-research-stack.md`
-- `docs/next-phase-gap-analysis.md`
+- generate a candidate change
+- execute or simulate it
+- compare the result against prior evidence
+- keep improvements, discard regressions
+- cascade iteration when a regression is detected
+- repeat inside a bounded policy and budget
+
+## What Athena Is Not
+
+- a plain wrapper around Claude or OpenAI
+- a one-shot agent that stops after a single answer
+- a generic coding tool with no research loop
+- a document-only literature review product
+- a fully unrestricted autonomous system
+
+## Current Product Position
+
+> `a strong-beta autonomous research system whose most validated deployment mode is operator-supervised autonomy`
+
+Autonomy is the product center. Operator supervision is the currently strongest verified safety envelope.
+
+**What the codebase includes today:**
+
+- structured research state: workflow history, proposals, decisions, canonical claims, iteration cycles, improvements, and reports
+- **Loop Cascade**: when a simulation regression triggers a revisit, the orchestrator automatically cascades back to the collection stage, increments the iteration counter, and records an `IterationCycleRecord` for audit and reporting
+- **Docker Runtime**: local commands can be routed through a disposable Docker container (`enableDocker()`), eliminating Windows platform dependencies
+- **URL Ingestion hardening**: 5 MB response size cap, 30-second AbortController timeout, content-type validation, boilerplate claim filtering, and `UrlIngestionDiagnostics` for observability
+- local and remote execution over SSH, including Windows-safe sync fallbacks (rsync → scp)
+- automation policy, retry, timeout, checkpoint, and recovery paths
+- graph-backed memory and handoff context
+- **TUI Research Detail Panel**: live iteration cycles and proposal scores visible in the TUI alongside run status
+- TUI and CLI surfaces for inspection, review, reporting, and control
+- security policy enforcement for dangerous commands and sensitive paths
+- 296-test suite covering auth, providers, remote execution, automation, TUI state, research flows, and ingestion
+
+**Known remaining gaps:**
+
+- fully hardened permission model for unattended production use
+- soak validation on real overnight workloads
+- no stable public API (internals may change across minor versions)
+
+## Core Loop
+
+```text
+goal
+  → collect evidence          (ingestion-service, source-adapters)
+  → select next improvement   (decision-engine, proposal scorecard)
+  → execute or simulate       (simulation-runner, remote executor)
+  → evaluate                  (result decision, drift calibration)
+  → redesign / cascade        (cascadeIteration, reconsideration triggers)
+  → repeat
+```
+
+Athena is best suited to goals like:
+
+- benchmark a training loop and find the next safe improvement
+- explore several implementation changes and keep the best one
+- run a long improvement program overnight across local and remote machines
+- use external evidence to justify system changes instead of guessing
+
+## Operating Modes
+
+| Mode | Description | Auto-execute |
+|------|-------------|-------------|
+| `manual` | Athena structures state and recommends actions; operator executes manually | None |
+| `assisted` | Bounded low-risk actions only; operator actively present | Evidence collection, reports |
+| `supervised-auto` | Autonomous progress within policy; operator monitors asynchronously | Full loop, policy-gated |
+| `overnight-auto` | Long-running bounded loop within budgets and gates | Full loop within budget |
+| `fully-autonomous` | Loop continues under explicit autonomy policy envelope | Full loop, evidence floor enforced |
+
+The validated story today is strongest in `supervised-auto`. The long-term direction is not to replace the loop — it is to let the same loop run with stronger policy, better evidence, stronger recovery, and tighter stop conditions.
+
+## System Shape
+
+Athena has five layers:
+
+| Layer | Purpose | Key files |
+|-------|---------|-----------|
+| **Loop Control** | Goal, stage, automation policy, retry, recovery | `core/orchestrator.ts`, `research/team-orchestrator.ts`, `research/automation-manager.ts` |
+| **Research and Evidence** | Ingest external sources, extract claims, build candidate packs | `research/ingestion-service.ts`, `research/source-adapters/`, `research/decision-engine.ts` |
+| **Execution and Experimentation** | Run improvements locally, over SSH, or in Docker | `remote/connection-pool.ts`, `remote/docker-runtime.ts`, `research/simulation-runner.ts` |
+| **Memory and Reporting** | Graph memory, experiment lineage, operator reports | `memory/graph-memory.ts`, `research/reporting.ts`, `ui/panels/research-status.tsx` |
+| **Safety and Governance** | Command policy, path policy, approval gates, audit log | `security/policy.ts`, `security/audit-store.ts`, `research/execution-gate.ts` |
+
+See [Architecture Overview](docs/architecture-overview.md) for the full layer breakdown and file mappings.
 
 ## Install
 
@@ -45,18 +123,22 @@ If you want the exact release boundary for this milestone, see:
 npm install -g @snoglobe/athena
 ```
 
-Requires Node.js 20+.
+## Authentication
 
-## Auth
+**Claude:**
 
-**Claude** (default) — either:
-- Install the [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) and run `claude login`
-- Or set `ANTHROPIC_API_KEY` and use `/claude-mode api`
-- Claude CLI usage is ban-free; conforms to Anthropic's usage policy
+```bash
+# Option A: Claude CLI
+claude login
 
-**OpenAI** — OAuth login on first run (requires ChatGPT Plus or Pro).
+# Option B: API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+# then in TUI: /claude-mode api
+```
 
-Check auth status at any time:
+**OpenAI:** start Athena and complete the OAuth login flow in the TUI.
+
+**Check auth status:**
 
 ```bash
 athena auth status
@@ -64,20 +146,19 @@ athena auth status
 
 ## Security Floor
 
-Athena now includes a minimal security floor for command execution and sensitive path access.
+Athena enforces a security floor on all command execution and file path access.
 
-- dangerous shell commands are blocked by default
-- high-risk commands (for example raw `ssh` / `rsync` / `scp`) can be forced through policy review
-- sensitive paths such as `~/.ssh`, cloud credential directories, Athena auth storage, and system paths are protected
-- path reads can require approval and protected-path writes are blocked by default in enforce mode
-
-Check the active security policy:
+- dangerous shell patterns are blocked by default (`rm -rf`, `dd if=`, etc.)
+- sensitive paths (`~/.ssh`, cloud credentials, OS config) are protected
+- protected writes are blocked in `enforce` mode; flagged for review in `audit` mode
+- risky-but-common commands (SSH, package installs) surface for explicit approval
 
 ```bash
+# inspect active policy
 athena security
 ```
 
-Tune policy in `athena.json`:
+Configure in `athena.json`:
 
 ```json
 {
@@ -93,483 +174,184 @@ Tune policy in `athena.json`:
 }
 ```
 
-Use `"mode": "audit"` while calibrating rules if you want Athena to log policy hits without enforcing them.
+## Docker Runtime (Windows / Isolated Execution)
+
+On Windows or when platform-independent execution is needed, route local commands through a disposable Docker container instead of the host shell:
+
+```typescript
+await connectionPool.enableDocker({
+  image: "ubuntu:22.04",     // default
+  volumes: ["/workspace:/workspace"],
+  env: { MY_VAR: "value" },
+});
+// subsequent pool.exec("local", ...) calls run inside Docker
+```
+
+Resource limits applied automatically: `--memory=512m --cpus=1 --network=none --rm`.
+
+Falls back transparently to the host shell when Docker is unavailable.
 
 ## Quickstart
 
-New users should be able to get one real run through the system with only the README.
-
 ```bash
-# 1) authenticate once
+# 1. authenticate
 athena auth login --provider claude
-# or
-athena auth login --provider openai
 
-# 2) start Athena with a real research goal
-athena "Benchmark the current training loop and propose the first safe improvement"
+# 2. start with a real improvement goal
+athena "Benchmark the current training loop, identify the first safe improvement, implement it, evaluate it, and report the result"
 
-# 3) inspect the structured research state that Athena created from that first prompt
+# 3. inspect structured run state in the TUI, or from the CLI:
 athena research runs
 athena research workflow <run-id>
+athena research iterations <run-id>   # per-cycle cascade history
+athena research proposals
+athena research next-actions
 
-# 4) generate an operator-facing report from the session
-athena report
+# 4. generate a report
+athena report <run-id>
 ```
 
-After the first prompt, Athena now creates a baseline research run automatically so `athena research ...` views and `athena report` have structured state to inspect.
+## CLI Reference
 
-## What Is Verified
+**Root commands:**
 
-The current milestone has explicit verification for:
+```text
+athena [prompt]               Interactive TUI (with optional initial prompt)
+athena -p "prompt"            Print response and exit (non-interactive)
+athena -c                     Continue the most recent session
+athena -r <session-id>        Resume a specific session
+athena auth login|logout|status
+athena init                   Initialize project config (athena.json)
+athena doctor                 Diagnose setup issues
+athena security               Show active security floor status
+athena sessions               List recent sessions
+athena watch <machine:pid>    Stream task output and metrics
+athena replay <session-id>    Replay a past session
+athena search "query"         Search session histories
+athena export [session-id]    Export data to CSV or JSON
+athena kill <machine:pid>     Kill a running remote task
+athena research ...
+athena proposal ...
+athena meeting ...
+athena dashboard ...
+athena history ...
+athena report [session-id]
+```
 
-- auth credential storage/refresh behavior
-- provider helper logic such as SSE parsing and retry classification
-- local and remote execution paths, including background exit-code handling
-- Windows-specific shell, null device, temp-path, and sync fallback behavior
-- ACP research orchestration tool wiring
-- TUI research status panel rendering
-- end-to-end research flow coverage for a local-only run and a remote-machine orchestration path
-- optional live SSH validation against a real remote host when remote test environment variables are provided
+**Research operator views:**
 
-Development verification commands:
+| Command | Purpose |
+|---------|---------|
+| `athena research runs` | Show recent and active runs |
+| `athena research workflow <run-id>` | Inspect workflow state history |
+| `athena research automation <run-id>` | Inspect automation checkpoints and retry state |
+| `athena research iterations <run-id>` | Per-cycle iteration cascade history |
+| `athena research proposals [--state <state>]` | Inspect proposal queue |
+| `athena research scorecard <proposal-id>` | Evidence and scoring detail (9-axis scorecard) |
+| `athena research decisions [id] [--tag <tag>]` | Inspect decision records |
+| `athena research claims [id]` | Canonical claims and evidence attribution |
+| `athena research ingestion` | Ingested source list and evidence health |
+| `athena research ingest <value> --type url\|document\|text\|repo` | Ingest a new source |
+| `athena research graph [root-id]` | Graph memory subgraph |
+| `athena research simulations` | Experiment and simulation history |
+| `athena research lineage <proposal-id>` | Experiment lineage chain |
+| `athena research improvements` | Self-improvement suggestions |
+| `athena research queue` | Review and intervention queue |
+| `athena research incidents` | Blocked, risky, or failed runtime incidents |
+| `athena research journal <run-id>` | Action journal and recovery trail |
+| `athena research operate <id> --kind run\|proposal\|improvement --action ...` | Apply bounded operator actions |
+| `athena research revisit <proposal-id>` | Trigger manual revisit |
+| `athena research budget` | Budget usage and remaining capacity |
+| `athena research next-actions` | Best next actions ranked by priority |
+| `athena research review <proposal-id>` | Start or advance proposal review |
+| `athena research evals` | Evaluation fixtures |
+| `athena research checklist` | Supervised production checklist |
+| `athena research soak` | Soak harness artifacts |
+| `athena research git-notify` | Git-triggered change detection |
+| `athena report [session-id]` | Generate an operator-facing report |
+
+## Remote Execution
+
+Athena keeps the improvement loop alive across machines:
+
+- execute locally (host shell or Docker container)
+- launch and track work over SSH (`ssh2`)
+- sync files to remote machines (rsync, scp fallback on Windows)
+- stream output, metrics, and resource usage
+- recover interrupted automation paths with checkpoint + resume
+
+## TUI
+
+The TUI provides live visibility into the running loop:
+
+- **Research Status Panel** — active run, workflow state, evidence health, automation policy
+- **Research Detail Panel** — last 3 iteration cycles with reason and transition, top 5 proposals with scores
+- **Metrics Dashboard** — real-time time-series metrics
+- **Task List Panel** — active background processes and their status
+- **Sticky Notes** — operator notes persistent across the session
+- `Ctrl+T` — Task overlay
+- `Ctrl+G` — Metrics overlay
+- `Esc` / `Ctrl+C` — Interrupt or quit
+
+## Reports
+
+`athena report <run-id>` generates a structured operator report including:
+
+- run summary and workflow state
+- **Iteration Cycles** section — full cascade history with reasons and transitions
+- top claims by confidence and freshness
+- evidence coverage gaps (`no_claims_extracted`, `all_claims_low_confidence`, etc.)
+- proposal scorecard summary
+- decision and recommendation
+
+## Verification
 
 ```bash
+# fast suite
 npm run test:research
 npm run test:phase5
-npm run test:phase7
+npm run test:phase6
+
+# full release suite
 npm run test:release
 npm run build
 ```
 
-`test:release` runs the research suite plus the release-hardening suite together.
-
-## CI
-
-Athena now includes GitHub Actions workflows for cross-platform validation:
-
-- `.github/workflows/ci.yml` runs build + research + Phase 5 + Phase 6 + Phase 7 on Linux, macOS, and Windows
-- `.github/workflows/remote-live.yml` is a manual workflow for real SSH-host validation
-
-To enable the live remote workflow in GitHub Actions, set these repository secrets:
-
-- `ATHENA_TEST_SSH_HOST`
-- `ATHENA_TEST_SSH_USER`
-- optional: `ATHENA_TEST_SSH_KEY`, `ATHENA_TEST_SSH_PORT`, `ATHENA_TEST_SSH_MACHINE_ID`
-
-For a live remote SSH validation run:
-
-```bash
-ATHENA_TEST_SSH_HOST=10.0.0.5 \
-ATHENA_TEST_SSH_USER=researcher \
-ATHENA_TEST_SSH_KEY=~/.ssh/id_rsa \
-npm run test:remote-live
-```
-
-Optional variables:
-
-- `ATHENA_TEST_SSH_PORT`
-- `ATHENA_TEST_SSH_MACHINE_ID`
-
-## Usage
-
-```
-athena [options]
-
-Options:
-  -p, --provider <claude|openai>  Model provider (default: claude)
-  --claude-mode <cli|api>         Claude auth mode (cli = Agent SDK, api = API key)
-  -v, --version                   Show version
-  -h, --help                      Show help
-```
-
-Type a goal and Athena takes over:
-
-```
-> Train a 125M parameter GPT on TinyStories to loss < 1.0
-```
-
-It will write training scripts, launch runs, parse metrics from stdout, set up monitoring intervals, compare experiments, and keep iterating until the goal is met or you interrupt.
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `/switch <claude\|openai>` | Switch model provider |
-| `/model <model-id>` | Set model |
-| `/models` | List available models |
-| `/reasoning <level>` | Set reasoning effort (Claude: `medium` `high` `max` / OpenAI: `none` `minimal` `low` `medium` `high` `xhigh`) |
-| `/claude-mode <cli\|api>` | Switch Claude auth mode |
-| `/machine add <id> <user@host[:port]>` | Add remote machine (`--key <path>`, `--auth <agent\|key>`) |
-| `/machine rm <id>` | Remove machine |
-| `/machines` | List machines and connection status |
-| `/metric [name ...]` | Show metric sparklines |
-| `/metrics clear` | Clear all metrics |
-| `/resume` | List recent sessions |
-| `/resume <n>` | Resume a past session |
-| `/writeup` | Generate experiment writeup from conversation |
-| `/sticky <text>` | Pin a note to the sidebar |
-| `/stickies` | List sticky notes |
-| `/memory [path]` | Browse the agent's memory tree |
-| `athena research <view> [target]` | Inspect structured research state from the CLI |
-| `athena report [session-id]` | Generate an operator-facing research report |
-| `athena security` | Show active security policy mode and rule counts |
-| `/status` | Provider, model, cost, state |
-| `/clear` | Clear conversation |
-| `/help` | Show all commands |
-
-## Research Operator Views
-
-Athena now exposes the research system as a first-class operator surface.
-
-```bash
-athena research runs
-athena research workflow <run-id>
-athena research automation <run-id>
-athena research proposals --state revisit_due
-athena research scorecard <proposal-id>
-athena research decisions <proposal-or-decision-id>
-athena research claims
-athena research claims <canonical-claim-id>
-athena research improvements
-athena research next-actions
-athena report <session-id>
-```
-
-### Research Views
-
-| View | What it shows |
-|---|---|
-| `runs` | Run-level stage, workflow state, and high-level status |
-| `workflow <run-id>` | Workflow transition history for a run |
-| `automation <run-id>` | Automation mode, approval gates, retry/checkpoint/timeout state |
-| `proposals` | Proposal queue with evidence/freshness/contradiction summary |
-| `scorecard <proposal-id>` | Detailed scoring axes and claim-support summary |
-| `decisions [id]` | Decision list or detail view with drift notes |
-| `claims` / `claims <id>` | Canonical claim inventory and per-claim evidence detail |
-| `revisit due` | Proposals that need reconsideration |
-| `improvements` | Self-improvement proposals and evaluations |
-| `review <id> --kind ... --action ...` | Apply an operator approval/review action safely |
-| `next-actions` | The most actionable operator follow-ups right now |
-
-## Research Workflow
-
-Athena's research loop now persists an explicit workflow state:
-
-```text
-draft -> ready -> approved -> running -> evaluating -> reported
-                                            \-> revisit_due
-                                            \-> failed
-```
-
-- `draft` / `ready` / `approved` cover intake and authorization
-- `running` means collection or experiment execution is active
-- `evaluating` means Athena is scoring evidence or simulation results
-- `reported` means the run has a stable reportable outcome
-- `revisit_due` means new evidence or contradiction pressure requires another pass
-
-Use `athena research workflow <run-id>` when you need the exact transition history.
-
-## Automation Modes
-
-Athena tracks automation policy per run:
-
-```text
-manual
-assisted
-supervised-auto
-overnight-auto
-```
-
-- `manual` keeps proposal, experiment, and revisit approval gated
-- `assisted` lowers friction but still assumes active operator review
-- `supervised-auto` allows bounded autonomous progress under policy
-- `overnight-auto` is intended for unattended execution with checkpoints, retry limits, and timeout windows
-
-Use `athena research automation <run-id>` to inspect:
-- approval requirements
-- retry counts and retry policy
-- checkpoint cadence and recent checkpoints
-- timeout budget for the run
-
-If automation is blocked by policy, the run state will surface the reason. The operator then resolves it via `athena research review ...` rather than by guessing internal state transitions.
-
-## Self-Improvement Loop
-
-Athena now records a safe self-improvement foundation rather than self-editing blindly.
-
-- Each finished run can emit an improvement proposal
-- Each improvement proposal gets an evaluation outcome
-- Rollback guidance is preserved with the proposal
-- Operators can inspect proposals with `athena research improvements`
-
-This means Athena can accumulate reusable lessons about:
-- automation policy
-- workflow guardrails
-- evaluation strategy
-- decision policy
-- reporting quality
-- research strategy
-
-## Operator Review Actions
-
-Athena now supports explicit operator-side approval/review actions.
-
-### Proposal actions
-
-```bash
-athena research review <proposal-id> --kind proposal --action approve
-athena research review <proposal-id> --kind proposal --action scope_trial
-athena research review <proposal-id> --kind proposal --action defer
-athena research review <proposal-id> --kind proposal --action revisit
-athena research review <proposal-id> --kind proposal --action archive
-```
-
-### Improvement actions
-
-```bash
-athena research review <improvement-id> --kind improvement --action queue
-athena research review <improvement-id> --kind improvement --action start_review
-athena research review <improvement-id> --kind improvement --action promote
-athena research review <improvement-id> --kind improvement --action dismiss
-```
-
-Safety rules:
-
-- proposal review actions move proposal status through guarded transitions
-- improvement review actions enforce terminal-state safety
-- promoting an improvement automatically dismisses duplicate items with the same `mergeKey`
-- automation blocks stay visible in run state until the operator resolves them
-
-## Operator Runbook
-
-When checking the system, this sequence is the fastest way to understand current state:
-
-1. `athena research runs`
-2. `athena research next-actions`
-3. `athena research workflow <run-id>`
-4. `athena research automation <run-id>`
-5. `athena research proposals`
-6. `athena research scorecard <proposal-id>`
-7. `athena research improvements`
-8. `athena report <session-id>`
-
-When you need to actively move work forward:
-
-1. inspect `athena research next-actions`
-2. inspect the blocking item with `workflow`, `automation`, `proposals`, or `improvements`
-3. apply `athena research review <id> --kind ... --action ...`
-4. re-check `athena research proposals` or `athena research improvements`
-5. confirm the overall system state again with `athena report <session-id>`
-
-Use this when you want to answer:
-- What is Athena doing right now?
-- Which proposal is blocked or needs revisit?
-- Is automation still within policy?
-- What changed the latest decision?
-- Did the last run teach Athena anything reusable?
-- Which item needs explicit operator approval?
-- Was the approval/review action applied safely?
-
-## Keys
-
-| Key | Action |
-|---|---|
-| `Ctrl+T` | Task output overlay |
-| `Ctrl+G` | Metrics overlay |
-| `Escape` | Interrupt / close overlay |
-| `Ctrl+C` | Interrupt / exit |
-| `Tab` | Autocomplete command |
-| `↑` `↓` | History / menu navigation |
-| `PageUp` `PageDown` | Scroll conversation |
-| `Ctrl+A` `Ctrl+E` | Start / end of line |
-| `Ctrl+W` | Delete word backward |
-| `Ctrl+U` | Clear line |
-
-Mouse scroll works in terminals that support SGR mouse reporting.
-
-## Remote Machines
-
-Athena can run workloads on remote machines over SSH. The `local` machine is always available.
-
-```bash
-# Add a GPU box
-/machine add gpu1 researcher@10.0.0.5 --key ~/.ssh/id_rsa
-
-# Add with custom port
-/machine add gpu2 user@hostname:2222
-```
-
-Machines are stored in `~/.athena/machines.json` and auto-connect on startup.
-
-The agent prefers remote machines for heavy compute and uses `local` for lightweight tasks. Or if you don't have a remote machine.
-
-### SSH and Sync Notes
-
-- Athena expects `ssh` for remote execution on every platform.
-- Athena prefers `rsync` for remote file sync.
-- On Windows, Athena falls back to `scp` when `rsync` is not installed but the OpenSSH client is available.
-- If neither `rsync` nor `scp` is available, remote sync will stay unavailable until you install one of them.
-- The remote-machine E2E coverage in this repo validates the remote orchestration path, task tracking, and automation finalization logic. It is not the same thing as a full live multi-host infrastructure soak test.
-- `npm run test:remote-live` upgrades that coverage to a real SSH host when credentials are available.
-
-Recommended checks:
-
-```bash
-athena doctor
-ssh -V
-rsync --version
-scp -V
-```
-
-## Recommended OS
-
-- `Linux` or `macOS`: recommended for the smoothest local + remote research workflow.
-- `Windows`: supported for local execution, background execution, doctor, and remote sync with `scp` fallback.
-- For remote-heavy research setups, use a Linux/macOS host or a Windows machine with OpenSSH and `rsync` installed.
-
-## Known Limits
-
-- Athena does not yet have a permissions or sandboxing model.
-- Remote execution is functional, but broad production-style validation across many real SSH targets is still pending.
-- Operator supervision is still the intended mode for proposal approval, experiment review, and risky environment changes.
-- If you care about reproducibility or data safety, run Athena in an isolated environment and keep backups.
-
-## How It Works
-
-Athena runs an autonomous loop:
-
-1. **Understand the goal** — break it into experiments
-2. **Launch** via `remote_exec_background` — stdout is captured, metrics are parsed live
-3. **Monitor** via `start_monitor` — periodic check-ins review progress
-4. **Compare** via `compare_runs` — keep improvements, discard regressions
-5. **Iterate** — plan and launch the next experiment
-6. **Stop** only when the goal is achieved or it hits an unrecoverable error
-
-### Metric Tracking
-
-Training scripts print metrics to stdout. Athena parses them automatically:
-
-```python
-# key=value format (detected via metric_names)
-print(f"loss={loss:.4f} acc={acc:.4f} lr={lr:.6f}")
-
-# Custom patterns (detected via metric_patterns)
-print(f"Step {step}: Loss {loss:.4f}")
-```
-
-Live sparklines appear in the dashboard. The agent uses `show_metrics` and `compare_runs` to make decisions.
-
-### Memory
-
-Long sessions get checkpointed when the context window fills up. The agent's memory persists as a virtual filesystem:
-
-```
-/goal                    → "Train TinyStories to loss < 1.0"
-/best                    → "Run #3: lr=3e-4, cosine → loss=0.83"
-/experiments/
-  4521                   → config, metrics, verdict
-  4380                   → config, metrics, verdict
-/observations/
-  cosine-schedule-helps  → "cosine decay outperforms linear by ~15%"
-```
-
-After a checkpoint, the agent receives its memory tree and continues where it left off.
-
-### Consult
-
-The agent can ask the other provider for a second opinion:
-
-```
-# If running on Claude, consult asks OpenAI (and vice versa)
-consult("I'm stuck at loss=0.9 — what should I try next?")
-```
-
-## Models
-
-**Claude** (200k context):
-- `claude-opus-4-6` — higher-end reasoning/coding (default)
-- `claude-sonnet-4-6` — balanced speed vs reasoning
-
-**OpenAI** (~400k context):
-- `gpt-5.4` — latest flagship, recommended (default)
-- `gpt-5.3-codex` — codex
-- `gpt-5.3-codex-spark` — research preview, text-only
-- `gpt-5.2-codex` — codex
-- `gpt-5.2`
-- `gpt-5.1-codex-max` — max compute
-- `gpt-5.1`
-- `gpt-5.1-codex` — codex
-
-## Tools
-
-The agent has access to 19 tools:
-
-| Tool | What it does |
-|---|---|
-| `remote_exec` | Run a quick command (ls, pip install, git clone) |
-| `remote_exec_background` | Launch a long-running process with metric tracking |
-| `remote_upload` / `remote_download` | rsync files between machines |
-| `read_file` / `write_file` / `patch_file` | File operations on any machine |
-| `list_machines` | Show configured machines |
-| `task_output` | Tail stdout/stderr of a background task |
-| `show_metrics` | Query metrics with sparklines |
-| `compare_runs` | Side-by-side comparison of two runs |
-| `clear_metrics` | Wipe stale metric data |
-| `kill_task` | Kill a running process |
-| `web_fetch` | Fetch web pages, docs, papers |
-| `sleep` | Sleep with composable triggers (timer, process exit, metric threshold, file change, resource usage) |
-| `start_monitor` / `stop_monitor` | Periodic monitoring loop |
-| `memory_ls` / `memory_read` / `memory_write` / `memory_rm` | Persistent memory |
-| `consult` | Ask the other AI provider |
-
-## Data
-
-Everything is stored locally in `~/.athena/`:
-
-```
-~/.athena/
-  athena.db          SQLite database (sessions, metrics, memory)
-  machines.json      Remote machine configs
-  auth/
-    auth.json        OAuth tokens and API keys
-  preferences.json   Last provider, claude mode
-```
-
-## Development
-
-```bash
-git clone https://github.com/snoglobe/athena.git
-cd athena
-npm install
-npm run dev          # tsx src/bootstrap.ts
-npm run test:research
-npm run test:phase5
-npm run test:phase7
-npm run test:remote-live  # requires ATHENA_TEST_SSH_* env vars
-npm run test:release
-npm run smoke:research
-npm run build        # tsc
-npm run build:win-exe
-npm start            # node dist/bootstrap.js
-```
-
-### Windows Launcher
-
-For a native Windows launcher that starts Athena without typing `node` each time:
-
-```powershell
-npm run build:win-exe
-.\release\Athena.exe
-```
-
-The launcher needs Node.js 20+. `register-athena-env.ps1` stores the detected `node.exe` path into `ATHENA_NODE` automatically. If detection misses, pass `-AthenaNode "C:\Program Files\nodejs\node.exe"`.
-
-To persist the app root, Athena home, and add the release directory to your user `PATH`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\register-athena-env.ps1
-```
-
-## License
-
-MIT
+Current test status: **296 tests, 288 passing** (7 pre-existing failures unrelated to core loop).
+
+### Internal Beta (v0.3) criteria
+
+| # | Criterion |
+|---|-----------|
+| IB-01~03 | Loop cascade runs 2+ cycles automatically; proposals are evidence-backed; failure redesigns to a different path |
+| IB-04~05 | High-risk actions blocked by policy; budget/iteration ceiling stops loop safely |
+| IB-06 | Operator can inspect full run state from CLI alone |
+| IB-07~08 | `tsc --noEmit` 0 errors; core test suite fully passes |
+| IB-09 | Windows local execution succeeds |
+| IB-10 | Consistent one-line definition across README, vision, glossary |
+
+See [Beta Criteria](docs/beta-criteria.md) and [Bounded Autonomy](docs/bounded-autonomy.md) for the full specification.
+
+## Documentation Map
+
+| Document | Purpose |
+|----------|---------|
+| [Glossary](docs/glossary.md) | Term definitions |
+| [Onboarding](docs/onboarding.md) | First-run guide |
+| [Vision](docs/vision.md) | Product direction |
+| [Architecture Overview](docs/architecture-overview.md) | Layer breakdown and key files |
+| [Current State Mapping](docs/current-state-mapping.md) | Codebase → concept map |
+| [Bounded Autonomy](docs/bounded-autonomy.md) | Per-mode policy boundaries and stop conditions |
+| [Beta Criteria](docs/beta-criteria.md) | Internal and limited beta release criteria |
+| [Validation Checklist](docs/validation-checklist.md) | 7-scenario operator validation suite |
+| [Loop Proof](docs/loop-proof.md) | Evidence template for representative runs |
+| [Release Decision Flow](docs/release-decision-flow.md) | Go/no-go process |
+| [Release Readiness v0.3](docs/release-readiness-v0.3.md) | Current readiness status |
+| [Production Autonomy Roadmap](docs/production-autonomy-roadmap.md) | Path to unattended production |
+| [Operator Runbook](docs/operator-runbook.md) | Day-to-day operations reference |
+| [Module Autoresearch](docs/module-autoresearch.md) | Per-module improvement research spec |
+| [Supervised Production Tutorial](docs/modes/operator-supervised-production-tutorial.md) | End-to-end supervised run walkthrough |
+
+## Summary
+
+Athena is an autonomous research system whose core value is repeatedly moving a target system closer to its goal through evidence-backed planning, execution, evaluation, and redesign.

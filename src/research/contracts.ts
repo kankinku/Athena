@@ -395,9 +395,32 @@ export interface TeamRunRecord {
   timeoutPolicy: TimeoutPolicy;
   automationState: AutomationRuntimeState;
   budget?: ExperimentBudget;
+  iterationCount: number;
   latestOutput?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
+}
+
+export type IterationCycleReason =
+  | "reconsideration_trigger_satisfied"
+  | "operator_requested_revisit"
+  | "evidence_invalidated"
+  | "simulation_regression";
+
+export interface IterationCycleRecord {
+  cycleId: string;
+  runId: string;
+  sessionId: string;
+  iterationIndex: number;
+  entryState: ResearchWorkflowState;
+  exitState: ResearchWorkflowState;
+  reason: IterationCycleReason;
+  reasonDetail: string;
+  proposalId?: string;
+  triggerId?: string;
+  evidenceLinks: string[];
+  createdAt: number;
+  completedAt?: number;
 }
 
 export type ActionJournalState =

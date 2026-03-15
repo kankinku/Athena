@@ -4,7 +4,7 @@ Notes:
 - Follow `$karpathy-guidelines`.
 - Keep each cut small and verifiable.
 - Preserve behavior first, then reduce responsibility overlap.
-- For operator-supervised production work, use `docs/operator-supervised-production-roadmap.md` as the source of truth for scope, evidence, deliverables, and exit gates.
+- For operator-supervised production work, use `docs/modes/operator-supervised-production-roadmap.md` as the source of truth for scope, evidence, deliverables, and exit gates.
 
 ## Step 1
 
@@ -75,7 +75,7 @@ Definition of done:
 - [ ] Operators can safely run Athena continuously on real workloads with bounded permissions, durable recovery, trustworthy evidence, and actionable incident visibility
 
 Execution rule:
-- [ ] Do not mark Steps `9-14` complete unless their roadmap exit gate is satisfied in `docs/operator-supervised-production-roadmap.md`
+- [ ] Do not mark Steps `9-14` complete unless their roadmap exit gate is satisfied in `docs/modes/operator-supervised-production-roadmap.md`
 
 ## Step 9
 

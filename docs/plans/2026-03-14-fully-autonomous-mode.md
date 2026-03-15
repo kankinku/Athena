@@ -1,5 +1,9 @@
 # Fully Autonomous Mode Implementation Plan
 
+> Historical note:
+> This dated plan describes one operating mode inside Athena, not Athena's product identity.
+> Athena should now be read first as an autonomous research system. Fully autonomous mode is one bounded deployment mode inside that system.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a first-class `fully-autonomous` mode to Athena with explicit bounded policy, runtime gating, and operator visibility.

@@ -1,12 +1,10 @@
 {
   "version": 1,
   "active": true,
-  "skill": "autopilot",
-  "keyword": "autopilot",
-  "phase": "reviewing",
-  "activated_at": "2026-03-14T09:04:35.225Z",
-  "updated_at": "2026-03-14T10:12:10.520Z",
-  "source": "keyword-detector",
-  "iteration": 24,
-  "last_turn_at": "2026-03-14T13:31:09.367Z"
+  "skill": "ralph",
+  "keyword": "Ralph",
+  "phase": "planning",
+  "activated_at": "2026-03-15T18:38:07.643Z",
+  "updated_at": "2026-03-15T19:05:02.817Z",
+  "source": "keyword-detector"
 }

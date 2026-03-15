@@ -1,107 +1,87 @@
-# 아키텍처 개요 (Architecture Overview)
+# 아키텍처 개요
 
-이 문서는 Athena 모듈 협의 시스템의 전체 아키텍처를 개괄한다.
+이 문서는 Athena를 `자율 연구 루프를 실행하는 시스템`으로 볼 때의 전체 구조를 설명한다.
 
----
+## 시스템 레이어
 
-## 시스템 레이어 구조
+### 1. Loop Control
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  운영자 인터페이스 (Operator Interface)                           │
-│  • Ink TUI (src/ui/)                                            │
-│  • Effect CLI (src/cli/)                                        │
-│  • athena proposal | meeting | impact | agree | execute | verify│
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────────┐
-│  협의 오케스트레이터 (Meeting Orchestrator)                        │
-│  • src/research/team-orchestrator.ts (확장)                     │
-│  • MeetingSession 라이프사이클 관리                               │
-│  • 에이전트 소집 + 응답 수집 + 합의 판정                          │
-└──────┬─────────────────┬──────────────────┬──────────────────────┘
-       │                 │                  │
-┌──────▼──────┐  ┌───────▼──────┐  ┌────────▼───────────┐
-│  영향도 분석  │  │  회의 세션    │  │  실행 게이트         │
-│  (Impact)   │  │  (Meeting)   │  │  (ExecutionGate)   │
-│             │  │              │  │                    │
-│ GraphBuilder│  │MeetingSession│  │ExecutionPlan       │
-│ ImpactAna-  │  │AgentPosition │  │PathScopeVerifier   │
-│   lyzer     │  │ApprovalCond  │  │AutoApproveChecker  │
-└──────┬──────┘  └───────┬──────┘  └────────┬───────────┘
-       │                 │                  │
-┌──────▼─────────────────▼──────────────────▼───────────────────┐
-│  Research 엔진 (연구 모듈 - src/research/)                       │
-│  • ProposalStore, DecisionStore, WorkflowStore                  │
-│  • MeetingStore (신규)                                          │
-│  • AutomationManager                                            │
-│  • ActionJournalStore (감사 로그)                               │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────────┐
-│  저장소 (Store - src/store/)                                      │
-│  • SQLite (better-sqlite3)                                       │
-│  • 19+1 마이그레이션 (v20: 6개 신규 테이블)                       │
-└─────────────────────────────────────────────────────────────────┘
-```
+목표, 현재 단계, 다음 액션, 자동화 정책, 재시도, 복구를 관리한다.
 
----
+주요 파일:
+- `src/research/workflow-state.ts`
+- `src/research/automation-manager.ts`
+- `src/research/team-orchestrator.ts`
+- `src/research/workflow-automation-service.ts`
+
+### 2. Research and Evidence
+
+외부 자료와 내부 상태를 개선 근거로 바꾸는 계층이다.
+
+주요 파일:
+- `src/research/ingestion-service.ts`
+- `src/research/claim-graph.ts`
+- `src/research/decision-engine.ts`
+- `src/research/source-adapters/*`
+
+### 3. Execution and Experimentation
+
+실제 개선을 수행하거나 시뮬레이션하고, 로컬 및 원격 머신에서 실행을 관리한다.
+
+주요 파일:
+- `src/remote/executor.ts`
+- `src/remote/local-runtime.ts`
+- `src/research/simulation-runner.ts`
+- `src/tools/research-orchestration.ts`
+
+### 4. Memory and Reporting
+
+실험 이력, 그래프 메모리, 보고서, 운영자 관찰면을 담당한다.
+
+주요 파일:
+- `src/memory/graph-memory.ts`
+- `src/research/reporting.ts`
+- `src/ui/panels/research-status.tsx`
+- `src/cli/research.ts`
+
+### 5. Safety and Governance
+
+정책, 위험 경계, 승인, 감사, 롤백, 검증을 담당한다.
+
+주요 파일:
+- `src/security/policy.ts`
+- `src/security/audit-store.ts`
+- `src/research/execution-gate.ts`
+- `src/research/verification-pipeline.ts`
 
 ## 핵심 데이터 흐름
 
-```
-사용자/에이전트 → ChangeProposal 생성
-                         │
-                 ImpactAnalyzer.analyze()
-                         │
-               ImpactAnalysisResult (직접/간접/참관)
-                         │
-                MeetingOrchestrator.summon()
-                         │
-                AgentPosition 수집 (라운드 1-5)
-                         │
-              합의 판정 → ExecutionPlan 생성
-                         │
-              (선택) 운영자 승인
-                         │
-            ExecutionGate.verify() → 실행 시작
-                         │
-          각 모듈 오너 에이전트 → 범위 내 파일 수정
-                         │
-          VerificationPipeline 실행 (단위→계약→통합→E2E)
-                         │
-          통과 → completed | 실패 → remeeting
+```text
+goal
+  -> collect evidence
+  -> select the next improvement
+  -> execute or simulate
+  -> evaluate result
+  -> update memory and decision state
+  -> choose next action
+  -> repeat
 ```
 
----
+## 제품 중심 해석
 
-## 컴포넌트 책임 매핑
+Athena의 본질은 `회의 시스템`이 아니라 `반복형 연구 실행 시스템`이다.
 
-| 컴포넌트 | 파일 | 책임 |
-|----------|------|------|
-| GraphBuilder | `src/impact/graph-builder.ts` | 모듈 레지스트리 → 의존 그래프 |
-| ImpactAnalyzer | `src/impact/impact-analyzer.ts` | 변경 파일 → 영향 모듈 |
-| MeetingOrchestrator | `src/research/team-orchestrator.ts` | 회의 전체 진행 |
-| MeetingStore | `src/research/meeting-store.ts` (신규) | 회의 기록 CRUD |
-| ExecutionGate | `src/research/execution-gate.ts` (신규) | 게이트 검사 + 계획 생성 |
-| VerificationPipeline | `src/research/verification-pipeline.ts` (신규) | 테스트 실행 + 재협의 트리거 |
-| ProposalStore | `src/research/proposal-store.ts` | Change proposal CRUD |
-| AutomationManager | `src/research/automation-manager.ts` | 자동 실행 정책 |
-| ActionJournalStore | `src/research/action-journal-store.ts` | 감사 로그 |
-
----
+- 회의는 다중 모듈 조정이 필요할 때 쓰는 지원 메커니즘이다.
+- 오케스트레이터는 루프 방향 제어기다.
+- 메모리와 보고서는 루프의 기억 장치다.
+- 원격 실행과 보안 정책은 루프의 실행 기반이다.
 
 ## 기술 스택
 
-| 계층 | 기술 |
-|------|------|
-| 런타임 | Node.js 20+ |
-| 언어 | TypeScript 5.7+ |
-| 함수형 프로그래밍 | Effect 3.x |
-| CLI 프레임워크 | @effect/cli |
-| TUI | Ink 6 + React 19 |
-| 데이터베이스 | SQLite (better-sqlite3) |
-| AI 공급자 | Claude (Anthropic SDK), OpenAI Codex SDK |
-| 원격 실행 | SSH2 |
-| 빌드 | TypeScript (tsc) |
-| 테스트 | Node.js built-in test runner |
+- Runtime: Node.js 20+
+- Language: TypeScript 5.7+
+- CLI: `@effect/cli`
+- TUI: Ink 6 + React 19
+- Persistence: SQLite + `better-sqlite3`
+- Models: Claude SDK, OpenAI Codex SDK
+- Remote execution: SSH2

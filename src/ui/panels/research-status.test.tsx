@@ -33,6 +33,7 @@ function createRun(overrides: Partial<TeamRunRecord> = {}): TeamRunRecord {
       retryCount: 0,
       resumeCount: 0,
     },
+    iterationCount: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,

@@ -57,12 +57,13 @@ export class IngestionService {
     this.teamStore.saveIngestionSource(request.sessionId, source);
 
     const claims = extractClaimsFromText(resolved.text, source, request.problemArea);
+    const validatedClaims = validateAndFilterClaims(claims, request.inputType);
     const pack = createCandidatePackFromSource({
       source,
       problemArea: request.problemArea,
-      claims,
+      claims: validatedClaims,
       methods: inferMethods(resolved.text),
-      counterEvidence: claims.filter((claim) => claim.disposition !== "support").map((claim) => claim.statement),
+      counterEvidence: validatedClaims.filter((claim) => claim.disposition !== "support").map((claim) => claim.statement),
       openQuestions: inferOpenQuestions(resolved.text),
     });
     const mergedExtractedClaims = mergeExtractedClaims(existing?.extractedClaims ?? [], pack.claims);
@@ -342,6 +343,38 @@ function mergeExtractedClaims(
   return [...merged.values()];
 }
 
+/**
+ * Validate and filter extracted claims for quality.
+ * URL sources get stricter validation because they tend to extract navigation
+ * and boilerplate text as claims.
+ */
+function validateAndFilterClaims(
+  claims: ExtractedClaim[],
+  inputType: IngestionRequest["inputType"],
+): ExtractedClaim[] {
+  return claims.filter((claim) => {
+    // Common: must have at least one citation span
+    if (!claim.citationSpans || claim.citationSpans.length === 0) return false;
+
+    // Common: statement must be non-trivial
+    if (claim.statement.split(/\s+/).length < 5) return false;
+
+    // URL sources: stricter — reject very low confidence or boilerplate-like claims
+    if (inputType === "url") {
+      if ((claim.confidence ?? 0) < 0.3) return false;
+      if (isBoilerplate(claim.statement)) return false;
+    }
+
+    return true;
+  });
+}
+
+function isBoilerplate(text: string): boolean {
+  const lower = text.toLowerCase();
+  return /^(click here|read more|subscribe|sign up|cookie|privacy|terms of|navigation|menu|copyright|all rights reserved)/i.test(lower)
+    || /^(page \d|loading|please wait|javascript)/i.test(lower);
+}
+
 function buildEvidenceHealthFromClaims(
   claims: ExtractedClaim[],
   canonicalClaims: ResearchCandidatePack["canonicalClaims"] = [],
@@ -354,6 +387,8 @@ function buildEvidenceHealthFromClaims(
     ...(claims.some((claim) => (claim.citationSpans?.length ?? 0) === 0) ? ["missing_citations"] : []),
     ...(claims.some((claim) => (claim.sourceAttributions?.length ?? 0) === 0) ? ["missing_source_attribution"] : []),
     ...(contradictionCount > 0 ? ["contradiction_present"] : []),
+    ...(claims.length === 0 ? ["no_claims_extracted"] : []),
+    ...(claims.every((c) => (c.confidence ?? 0) < 0.4) ? ["all_claims_low_confidence"] : []),
   ];
 
   return {

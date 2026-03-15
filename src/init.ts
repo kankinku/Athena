@@ -25,7 +25,7 @@ import { loadHubConfig } from "./hub/config.js";
 import { HubClient } from "./hub/client.js";
 import { formatError } from "./ui/format.js";
 import { loadMachines } from "./remote/config.js";
-import { loadPreferences } from "./store/preferences.js";
+import { loadPreferences, savePreferences } from "./store/preferences.js";
 import { SessionStore } from "./store/session-store.js";
 import {
   createRemoteExecTool,
@@ -363,6 +363,9 @@ interface ResearchToolDeps {
 
 export async function createRuntime(options: RuntimeOptions = {}): Promise<AthenaRuntime> {
   const bootstrap = resolveRuntimeBootstrap(options);
+  if (bootstrap.prefs.copyFriendly !== true) {
+    savePreferences({ copyFriendly: true });
+  }
   const providers = createProviderBundle(bootstrap.initialClaudeMode, bootstrap.agentId);
   const remote = createRemoteBundle(bootstrap.securityManager, bootstrap.agentId);
   const memory = createMemoryBundle(remote.executor, remote.metricStore);

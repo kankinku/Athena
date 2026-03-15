@@ -522,6 +522,142 @@ const migrations: Migration[] = [
       ALTER TABLE security_decisions ADD COLUMN action_class TEXT;
     `,
   },
+
+  // ─── v0.4: Module-Based Change Management System ──────────────────────────
+  {
+    version: 20,
+    sql: `
+      -- Extend proposal_briefs with change management fields
+      ALTER TABLE proposal_briefs ADD COLUMN change_workflow_state TEXT NOT NULL DEFAULT 'draft';
+      ALTER TABLE proposal_briefs ADD COLUMN changed_paths_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN directly_affected_modules_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN indirectly_affected_modules_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN observer_modules_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN required_agents_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN meeting_required INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE proposal_briefs ADD COLUMN meeting_session_id TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN execution_plan_id TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN required_tests_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN contract_checks_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN rollback_conditions_json TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN feature_flag_required INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE proposal_briefs ADD COLUMN feature_flag_name TEXT;
+      ALTER TABLE proposal_briefs ADD COLUMN created_by TEXT NOT NULL DEFAULT 'user';
+
+      -- Agent meeting sessions
+      CREATE TABLE IF NOT EXISTS meeting_sessions (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'scheduled',
+        current_round INTEGER NOT NULL DEFAULT 1,
+        mandatory_agents_json TEXT NOT NULL DEFAULT '[]',
+        conditional_agents_json TEXT NOT NULL DEFAULT '[]',
+        observer_agents_json TEXT NOT NULL DEFAULT '[]',
+        responded_agents_json TEXT NOT NULL DEFAULT '[]',
+        absent_agents_json TEXT NOT NULL DEFAULT '[]',
+        key_positions_json TEXT,
+        conflict_points_json TEXT,
+        consensus_type TEXT,
+        execution_plan_id TEXT,
+        follow_up_actions_json TEXT,
+        scheduled_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (proposal_id) REFERENCES proposal_briefs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_meeting_sessions_proposal
+        ON meeting_sessions(proposal_id, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_meeting_sessions_state
+        ON meeting_sessions(state, updated_at);
+
+      -- Agent position records (statements during meetings)
+      CREATE TABLE IF NOT EXISTS agent_positions (
+        id TEXT PRIMARY KEY,
+        meeting_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        module_id TEXT NOT NULL,
+        round INTEGER NOT NULL,
+        position TEXT NOT NULL,
+        impact TEXT NOT NULL DEFAULT '',
+        risk TEXT NOT NULL DEFAULT '',
+        required_changes_json TEXT NOT NULL DEFAULT '[]',
+        vote TEXT,
+        approval_condition TEXT,
+        notes TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_positions_meeting
+        ON agent_positions(meeting_id, round, agent_id);
+
+      -- Approval conditions (for conditionally-approved consensus)
+      CREATE TABLE IF NOT EXISTS approval_conditions (
+        id TEXT PRIMARY KEY,
+        meeting_id TEXT NOT NULL,
+        proposal_id TEXT NOT NULL,
+        required_by TEXT NOT NULL,
+        condition_text TEXT NOT NULL,
+        verification_method TEXT NOT NULL,
+        verified_by TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        verified_at INTEGER,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_approval_conditions_meeting
+        ON approval_conditions(meeting_id, status);
+
+      -- Execution plans (generated from meeting consensus)
+      CREATE TABLE IF NOT EXISTS execution_plans (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        meeting_id TEXT NOT NULL,
+        task_assignments_json TEXT NOT NULL DEFAULT '[]',
+        required_tests_json TEXT NOT NULL DEFAULT '[]',
+        rollback_plan TEXT NOT NULL DEFAULT '',
+        feature_flags_json TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (proposal_id) REFERENCES proposal_briefs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_execution_plans_proposal
+        ON execution_plans(proposal_id, status);
+
+      -- Verification results (post-execution test outcomes)
+      CREATE TABLE IF NOT EXISTS verification_results (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        execution_plan_id TEXT NOT NULL,
+        test_results_json TEXT NOT NULL DEFAULT '[]',
+        overall_outcome TEXT NOT NULL,
+        remeeting_required INTEGER NOT NULL DEFAULT 0,
+        remeeting_reason TEXT,
+        verified_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (proposal_id) REFERENCES proposal_briefs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_verification_results_proposal
+        ON verification_results(proposal_id, verified_at);
+
+      -- Module impact cache (ImpactAnalyzer results per proposal)
+      CREATE TABLE IF NOT EXISTS module_impact_records (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        changed_paths_json TEXT NOT NULL,
+        impact_result_json TEXT NOT NULL,
+        analyzer_version TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (proposal_id) REFERENCES proposal_briefs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_module_impact_records_proposal
+        ON module_impact_records(proposal_id, created_at);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

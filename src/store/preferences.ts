@@ -11,7 +11,12 @@ export interface Preferences {
   model?: string;
   reasoningEffort?: string;
   language?: "eng" | "kor";
+  copyFriendly?: boolean;
 }
+
+const DEFAULT_PREFERENCES: Preferences = {
+  copyFriendly: true,
+};
 
 function ensureDir(): void {
   if (!existsSync(CONFIG_DIR)) {
@@ -21,10 +26,10 @@ function ensureDir(): void {
 
 export function loadPreferences(): Preferences {
   try {
-    if (!existsSync(PREFS_FILE)) return {};
-    return JSON.parse(readFileSync(PREFS_FILE, "utf-8"));
+    if (!existsSync(PREFS_FILE)) return { ...DEFAULT_PREFERENCES };
+    return { ...DEFAULT_PREFERENCES, ...JSON.parse(readFileSync(PREFS_FILE, "utf-8")) };
   } catch {
-    return {};
+    return { ...DEFAULT_PREFERENCES };
   }
 }
 

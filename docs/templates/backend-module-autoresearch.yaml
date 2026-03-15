@@ -1,0 +1,47 @@
+# 백엔드 모듈 Autoresearch 템플릿
+# 적용 대상: store, research, security, impact 모듈
+
+module_type: backend
+iteration_pattern: test-driven
+
+change_approach:
+  - 단위 테스트 먼저 작성 (실패하는 테스트 확인)
+  - 최소한의 구현 변경으로 테스트 통과
+  - 단위 테스트 전체 통과 확인
+  - 통합 테스트 실행
+
+goals:
+  primary: test-pass-rate        # 단위 + 통합 테스트 통과율
+  secondary:
+    - contract-stability         # 공용 인터페이스 안정성
+    - error-reduction            # 런타임 오류 감소
+
+rollback_strategy: git-reset-hard
+test_runner: "node --import tsx --test"
+max_parallel_tests: 1
+test_timeout_minutes: 5
+
+budget:
+  max_wall_clock_minutes: 60
+  max_iterations: 10
+  max_files_changed: 5
+  max_cost_usd: 1.00
+
+allowed_file_patterns:
+  - "src/{module_id}/**"
+
+forbidden_actions:
+  - modify_public_interfaces_without_proposal
+  - delete_existing_exports
+  - modify_other_modules
+
+safety_checks:
+  - verify-allowed-paths
+  - check-interface-compatibility
+  - run-affected-tests-before-commit
+
+on_failure:
+  - git-stash-changes
+  - run-affected-tests-to-confirm-restore
+  - create-improvement-proposal
+  - notify-operator

@@ -614,3 +614,259 @@ export interface ImprovementEvaluationRecord {
   metricDeltaSummary: string;
   createdAt: number;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHANGE MANAGEMENT SYSTEM (v0.4+)
+// Task 8: State Machine and Data Model for Module-Based Change Coordination
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 모듈 협의 기반 change proposal의 전체 생명주기 상태.
+ * 기존 ResearchWorkflowState와 함께 사용 (proposal_briefs.workflow_state 필드).
+ */
+export type ChangeWorkflowState =
+  | "draft"             // change proposal 작성 중
+  | "impact-analyzed"   // 영향도 분석 완료
+  | "agents-summoned"   // 관련 에이전트 소집됨
+  | "in-meeting"        // 에이전트 회의 진행 중
+  | "agreed"            // 합의 도달, 실행 계획 확정
+  | "executing"         // 모듈 오너들이 실행 중
+  | "verifying"         // 통합 테스트 검증 중
+  | "completed"         // 변경 완료 + 검증 통과
+  | "remeeting"         // 검증 실패로 재협의
+  | "on-hold"           // 합의 불가로 보류
+  | "rejected"          // 거절됨
+  | "failed";           // 오류/타임아웃
+
+/**
+ * Change proposal의 상세 상태 (더 세분화된 ChangeWorkflowState).
+ */
+export type ChangeProposalStatus =
+  | "draft"
+  | "ready"
+  | "impact-analyzed"
+  | "meeting-scheduled"
+  | "agreed"
+  | "conditionally-agreed"
+  | "split-execution"
+  | "on-hold"
+  | "rejected"
+  | "executing"
+  | "verifying"
+  | "completed"
+  | "rolled-back"
+  | "remeeting"
+  | "archived";
+
+/**
+ * 에이전트 회의 세션 상태.
+ */
+export type MeetingState =
+  | "scheduled"
+  | "pending-quorum"
+  | "round-1"
+  | "round-2"
+  | "round-3"
+  | "round-4"
+  | "round-5"
+  | "completed"
+  | "on-hold"
+  | "failed";
+
+/**
+ * 합의 유형.
+ */
+export type ConsensusType =
+  | "approved"
+  | "conditionally-approved"
+  | "split-execution"
+  | "experiment-first"
+  | "on-hold"
+  | "rejected";
+
+/**
+ * 에이전트 투표.
+ */
+export type AgentVote =
+  | "approve"
+  | "conditionally_approve"
+  | "split"
+  | "hold"
+  | "reject"
+  | "abstain";
+
+/**
+ * 에이전트 입장 (라운드 2).
+ */
+export type AgentPositionStance = "support" | "neutral" | "concern" | "oppose";
+
+/**
+ * 충돌 유형.
+ */
+export type ConflictType =
+  | "interface-conflict"
+  | "schedule-conflict"
+  | "test-risk"
+  | "security-priority"
+  | "resource-conflict"
+  | "scope-disagreement";
+
+/**
+ * 에이전트 회의에서의 발언 기록.
+ */
+export interface AgentPositionRecord {
+  positionId: string;
+  meetingId: string;
+  agentId: string;
+  moduleId: string;
+  round: number;
+  position: AgentPositionStance;
+  impact: string;
+  risk: string;
+  requiredChanges: string[];
+  vote?: AgentVote;
+  approvalCondition?: string;
+  notes?: string;
+  createdAt: number;
+}
+
+/**
+ * 회의 중 식별된 충돌 포인트.
+ */
+export interface ConflictPoint {
+  conflictId: string;
+  conflictType: ConflictType;
+  description: string;
+  involvedAgents: string[];
+  proposedResolutions: string[];
+  resolvedAt?: number;
+  resolutionNotes?: string;
+}
+
+/**
+ * 조건부 승인의 조건 항목.
+ */
+export interface ApprovalConditionRecord {
+  conditionId: string;
+  meetingId: string;
+  proposalId: string;
+  requiredBy: string;
+  conditionText: string;
+  verificationMethod: string;
+  verifiedBy?: string;
+  status: "pending" | "verified" | "waived" | "failed";
+  verifiedAt?: number;
+  createdAt: number;
+}
+
+/**
+ * 에이전트 발언 요약 (회의 기록용).
+ */
+export interface AgentPositionSummary {
+  agentId: string;
+  moduleId: string;
+  position: AgentPositionStance;
+  vote?: AgentVote;
+  keyPoints: string[];
+}
+
+/**
+ * 에이전트 회의 세션 전체 기록.
+ */
+export interface MeetingSessionRecord {
+  meetingId: string;
+  proposalId: string;
+  state: MeetingState;
+  currentRound: number;
+  mandatoryAgents: string[];
+  conditionalAgents: string[];
+  observerAgents: string[];
+  respondedAgents: string[];
+  absentAgents: string[];
+  keyPositions: AgentPositionSummary[];
+  conflictPoints: ConflictPoint[];
+  consensusType?: ConsensusType;
+  consensusReachedAt?: number;
+  executionPlanId?: string;
+  followUpActions: MeetingFollowUpAction[];
+  scheduledAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * 회의 후속 작업.
+ */
+export interface MeetingFollowUpAction {
+  actionId: string;
+  description: string;
+  assignedAgent: string;
+  dueAt?: number;
+  status: "pending" | "completed" | "cancelled";
+}
+
+/**
+ * 합의 결과로 생성되는 실행 계획.
+ */
+export interface TaskAssignment {
+  agentId: string;
+  moduleId: string;
+  tasks: string[];
+  dependsOnAgents: string[];
+  estimatedMinutes?: number;
+}
+
+export interface ExecutionPlanRecord {
+  executionPlanId: string;
+  proposalId: string;
+  meetingId: string;
+  taskAssignments: TaskAssignment[];
+  requiredTests: string[];
+  rollbackPlan: string;
+  featureFlags: string[];
+  status: "pending" | "in-progress" | "completed" | "failed" | "rolled-back";
+  startedAt?: number;
+  completedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * 검증 단계 결과.
+ */
+export type VerificationOutcome = "passed" | "failed" | "partial" | "skipped";
+
+export interface VerificationResult {
+  verificationId: string;
+  proposalId: string;
+  executionPlanId: string;
+  testResults: TestResult[];
+  overallOutcome: VerificationOutcome;
+  remeetingRequired: boolean;
+  remeetingReason?: string;
+  verifiedAt: number;
+  createdAt: number;
+}
+
+export interface TestResult {
+  testId: string;
+  testCommand: string;
+  outcome: "passed" | "failed" | "skipped" | "error";
+  failureMessage?: string;
+  ownerModule: string;
+  durationMs?: number;
+}
+
+/**
+ * 영향받는 모듈 분류 (ImpactAnalyzer 결과와 동일 구조).
+ */
+export type ModuleImpactLevel = "direct" | "indirect" | "observer";
+
+export interface AffectedModuleRecord {
+  moduleId: string;
+  impactLevel: ModuleImpactLevel;
+  impactReason: string;
+  affectedInterfaces: string[];
+}

@@ -4,6 +4,7 @@ import type { AthenaRuntime } from "../../init.js";
 import type { Attachment } from "../../providers/types.js";
 import { handleSlashCommand } from "../commands.js";
 import type { Message, ToolData } from "../types.js";
+import { normalizeDisplayValue, normalizeToolResultForDisplay } from "../path-normalization.js";
 
 interface UseChatSessionResult {
   messages: Message[];
@@ -117,7 +118,7 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
             const toolData: ToolData = {
               callId: event.id,
               name: event.name,
-              args: event.args,
+              args: normalizeDisplayValue(event.args),
             };
             const messageId = addMessage("tool", "", toolData);
             toolMessageIds.set(event.id, messageId);
@@ -130,12 +131,12 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
             if (messageId !== undefined) {
               setMessages((prev) => prev.map((message) => (
                 message.id === messageId && message.tool
-                  ? { ...message, tool: { ...message.tool, result: event.result, isError: event.isError } }
+                  ? { ...message, tool: { ...message.tool, result: normalizeToolResultForDisplay(event.result), isError: event.isError } }
                   : message
               )));
             }
             if (event.isError) {
-              addMessage("error", event.result);
+              addMessage("error", normalizeToolResultForDisplay(event.result));
             }
           }
 

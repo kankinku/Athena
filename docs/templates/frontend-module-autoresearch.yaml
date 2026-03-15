@@ -1,0 +1,47 @@
+# 프런트엔드 모듈 Autoresearch 템플릿
+# 적용 대상: ui 모듈
+
+module_type: frontend
+iteration_pattern: render-driven
+
+change_approach:
+  - 렌더 스냅샷 기준 확인
+  - Ink/React 컴포넌트 변경
+  - 렌더 테스트 실행
+  - 스냅샷 비교 (예상 외 변경 감지)
+
+goals:
+  primary: render-test-pass-rate
+  secondary:
+    - visual-consistency
+    - layout-correctness
+
+rollback_strategy: git-reset-hard
+test_runner: "node --import tsx --test"
+max_parallel_tests: 1
+test_timeout_minutes: 3
+
+budget:
+  max_wall_clock_minutes: 20
+  max_iterations: 5
+  max_files_changed: 3
+  max_cost_usd: 0.30
+
+allowed_file_patterns:
+  - "src/ui/**"
+  - "src/app.tsx"
+
+forbidden_actions:
+  - modify_layout_without_panel_owner_approval
+  - change_global_keybindings_without_proposal
+  - modify_non_ui_modules
+
+safety_checks:
+  - verify-allowed-paths
+  - run-render-tests
+  - check-snapshot-regression
+
+on_failure:
+  - git-stash-changes
+  - restore-snapshots
+  - create-improvement-proposal

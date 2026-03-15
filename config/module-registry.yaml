@@ -1,0 +1,298 @@
+# Athena Module Ownership Registry
+# 모든 모듈의 소유권, 공용 인터페이스, 의존 관계, 위험도를 정의한다.
+# 이 파일이 영향도 그래프와 에이전트 소집의 기준이 된다.
+
+version: "1.0.0"
+updated_at: "2026-03-15"
+pilot_phase: true
+
+modules:
+
+  # ─── CORE DATA LAYER ────────────────────────────────────────────────────────
+
+  - module_id: store
+    display_name: "데이터 저장소 (Store)"
+    description: "SQLite 데이터베이스, 마이그레이션, 세션/프리퍼런스 관리"
+    owner_agent: store-agent
+    paths:
+      - src/store/**
+    public_interfaces:
+      - getDb()                          # src/store/database.ts
+      - runMigrations()                  # src/store/migrations.ts
+      - SessionStore                     # src/store/session-store.ts
+      - PreferencesStore                 # src/store/preferences.ts
+      - DB_SCHEMA_VERSION                # 현재 마이그레이션 버전
+    depends_on: []
+    runtime_dependencies:
+      - better-sqlite3
+    affected_tests:
+      - src/store/migrations-upgrade.test.ts
+      - src/store/preferences.test.ts
+    risk_level: critical
+    merge_gate: migration_review_required
+    notes:
+      - "DB 스키마 변경은 반드시 운영자 승인 필요"
+      - "하위 호환성 없는 변경은 마이그레이션 + 롤백 계획 필수"
+      - "모든 다른 모듈이 의존하는 최하위 레이어"
+
+  # ─── RESEARCH / PROPOSAL ENGINE ─────────────────────────────────────────────
+
+  - module_id: research
+    display_name: "연구 엔진 (Research)"
+    description: "change proposal 생명주기, 에이전트 회의, 합의 결정, 검증 트리거 관리"
+    owner_agent: research-agent
+    paths:
+      - src/research/**
+    public_interfaces:
+      - ProposalStore                    # src/research/proposal-store.ts
+      - DecisionStore                    # src/research/decision-store.ts
+      - WorkflowStore                    # src/research/workflow-store.ts
+      - MeetingStore                     # src/research/meeting-store.ts (신규)
+      - AutomationManager                # src/research/automation-manager.ts
+      - assertValidWorkflowTransition()  # src/research/workflow-state.ts
+      - contracts (all types)            # src/research/contracts.ts
+    depends_on:
+      - store
+    runtime_dependencies:
+      - nanoid
+    affected_tests:
+      - src/research/*.test.ts
+      - src/e2e/local-research.test.ts
+    risk_level: high
+    merge_gate: proposal_required
+    notes:
+      - "contracts.ts 타입 변경은 cli, ui에 영향"
+      - "상태 전환 로직 변경 시 회귀 테스트 필수"
+      - "새 DB 테이블 추가 시 store 모듈과 협의 필요"
+
+  # ─── IMPACT ANALYSIS ────────────────────────────────────────────────────────
+
+  - module_id: impact
+    display_name: "영향도 분석 (Impact)"
+    description: "변경 파일 → 영향 모듈 계산, 의존성 그래프 관리"
+    owner_agent: impact-agent
+    paths:
+      - src/impact/**
+      - config/module-registry.yaml
+    public_interfaces:
+      - ImpactAnalyzer                   # src/impact/impact-analyzer.ts
+      - GraphBuilder                     # src/impact/graph-builder.ts
+      - ModuleImpact type                # 영향도 분석 결과 타입
+    depends_on:
+      - store
+    runtime_dependencies: []
+    affected_tests:
+      - src/impact/*.test.ts
+    risk_level: medium
+    merge_gate: impact_test_required
+    notes:
+      - "module-registry.yaml 변경은 영향도 분석 결과를 변경함"
+      - "새 모듈 추가 시 이 파일 업데이트 필수"
+
+  # ─── CLI INTERFACE ───────────────────────────────────────────────────────────
+
+  - module_id: cli
+    display_name: "CLI 인터페이스 (CLI)"
+    description: "모든 athena 커맨드 정의, 운영자 조회/액션 서페이스"
+    owner_agent: cli-agent
+    paths:
+      - src/cli/**
+    public_interfaces:
+      - athena research <subcommand>
+      - athena proposal <subcommand>
+      - athena meeting <subcommand>
+      - athena impact analyze
+      - athena report
+      - athena security
+    depends_on:
+      - research
+      - store
+      - impact
+    runtime_dependencies:
+      - "@effect/cli"
+      - "@effect/platform-node"
+    affected_tests:
+      - src/cli/*.test.ts
+      - src/research/cli-regression.test.ts
+      - src/research/cli-snapshot.test.ts
+    risk_level: medium
+    merge_gate: snapshot_test_required
+    notes:
+      - "커맨드 인터페이스 변경은 README와 docs/operator-runbook.md 업데이트 필요"
+      - "출력 형식 변경은 cli-snapshot.test.ts 업데이트 필요"
+
+  # ─── TUI / DASHBOARD ────────────────────────────────────────────────────────
+
+  - module_id: ui
+    display_name: "TUI 대시보드 (UI)"
+    description: "Ink/React 기반 TUI 컴포넌트, 패널, 오버레이"
+    owner_agent: ui-agent
+    paths:
+      - src/ui/**
+      - src/app.tsx
+    public_interfaces:
+      - ResearchStatusPanel              # src/ui/panels/research-status.tsx
+      - MeetingStatusPanel               # src/ui/panels/meeting-status.tsx (신규)
+      - ConversationPanel                # src/ui/panels/conversation.tsx
+      - MetricsDashboard                 # src/ui/panels/metrics-dashboard.tsx
+    depends_on:
+      - research
+      - store
+    runtime_dependencies:
+      - ink
+      - react
+      - "@inkjs/ui"
+    affected_tests:
+      - src/ui/**/*.test.ts
+      - src/ui/**/*.test.tsx
+    risk_level: low
+    merge_gate: render_test_required
+    notes:
+      - "패널 추가는 src/ui/layout.tsx 수정 필요"
+      - "research contracts.ts 타입 변경 시 패널 업데이트 필요"
+
+  # ─── REMOTE EXECUTION ───────────────────────────────────────────────────────
+
+  - module_id: remote
+    display_name: "원격 실행 (Remote)"
+    description: "SSH 원격 실행, 백그라운드 프로세스 트래킹, 파일 동기화"
+    owner_agent: remote-agent
+    paths:
+      - src/remote/**
+    public_interfaces:
+      - Executor                         # src/remote/executor.ts
+      - ConnectionPool                   # src/remote/connection-pool.ts
+      - LocalRuntime                     # src/remote/local-runtime.ts
+    depends_on:
+      - store
+      - security
+    runtime_dependencies:
+      - ssh2
+    affected_tests:
+      - src/remote/*.test.ts
+      - src/e2e/remote-research.test.ts
+      - src/e2e/remote-live.test.ts
+    risk_level: high
+    merge_gate: integration_test_required
+    notes:
+      - "원격 실행 변경은 보안 모듈 협의 필수"
+      - "윈도우 경로 처리 주의"
+      - "rsync/scp 폴백 로직 변경 시 E2E 테스트 필수"
+
+  # ─── SECURITY ───────────────────────────────────────────────────────────────
+
+  - module_id: security
+    display_name: "보안 정책 (Security)"
+    description: "커맨드 실행 정책, 경로 보호, 보안 결정 감사"
+    owner_agent: security-agent
+    paths:
+      - src/security/**
+    public_interfaces:
+      - SecurityPolicy                   # src/security/policy.ts
+      - evaluateAction()                 # src/security/policy.ts
+      - SecurityDecisionStore            # src/security/audit-store.ts (신규)
+    depends_on:
+      - store
+    runtime_dependencies: []
+    affected_tests:
+      - src/security/policy.test.ts
+      - src/remote/connection-pool-security.test.ts
+      - src/tools/file-ops-security.test.ts
+    risk_level: critical
+    merge_gate: security_review_required
+    notes:
+      - "보안 정책 완화는 반드시 운영자 승인 필요"
+      - "새 커맨드 패밀리 추가 시 분류 업데이트 필요"
+
+  # ─── ACP TOOLS ──────────────────────────────────────────────────────────────
+
+  - module_id: tools
+    display_name: "에이전트 도구 (Tools)"
+    description: "ACP 연구 오케스트레이션 도구, 파일 작업, 리모트 실행 래퍼"
+    owner_agent: tools-agent
+    paths:
+      - src/tools/**
+      - src/acp/**
+    public_interfaces:
+      - ResearchOrchestrationTools       # src/tools/research-orchestration.ts
+      - FileOps                          # src/tools/file-ops.ts
+    depends_on:
+      - remote
+      - security
+      - store
+    runtime_dependencies: []
+    affected_tests:
+      - src/tools/research-orchestration.test.ts
+      - src/tools/file-ops-security.test.ts
+    risk_level: high
+    merge_gate: proposal_required
+    notes:
+      - "도구 추가/제거는 에이전트 능력 변경으로 연구 모듈과 협의 필요"
+
+  # ─── PROVIDERS ──────────────────────────────────────────────────────────────
+
+  - module_id: providers
+    display_name: "AI 공급자 (Providers)"
+    description: "Claude/OpenAI 인증, 모델 선택, API 통신"
+    owner_agent: providers-agent
+    paths:
+      - src/providers/**
+    public_interfaces:
+      - AuthManager                      # src/providers/auth/auth-manager.ts
+      - ProviderAdapter                  # src/providers/*.ts
+    depends_on:
+      - store
+    runtime_dependencies:
+      - "@anthropic-ai/claude-agent-sdk"
+      - "@openai/codex-sdk"
+    affected_tests:
+      - src/providers/auth/auth-manager.test.ts
+      - src/providers/provider-types.test.ts
+      - src/providers/openai/oauth.test.ts
+    risk_level: medium
+    merge_gate: auth_test_required
+    notes:
+      - "인증 토큰 저장 경로 변경은 store 모듈 협의 필요"
+
+# ─── MERGE GATE DEFINITIONS ─────────────────────────────────────────────────
+
+merge_gates:
+  migration_review_required:
+    description: "DB 스키마 변경 - 운영자 검토 + 마이그레이션 계획 필수"
+    required_approvals: ["operator", "store-agent"]
+    required_checks: ["migration-test", "rollback-test"]
+
+  proposal_required:
+    description: "change proposal 생성 필수 - 자동 실행 불가"
+    required_approvals: ["operator"]
+    required_checks: ["unit-test", "integration-test"]
+
+  snapshot_test_required:
+    description: "CLI 스냅샷 테스트 통과 필수"
+    required_approvals: []
+    required_checks: ["cli-snapshot-test"]
+
+  render_test_required:
+    description: "UI 렌더 테스트 통과 필수"
+    required_approvals: []
+    required_checks: ["render-test"]
+
+  integration_test_required:
+    description: "통합 테스트 통과 필수"
+    required_approvals: ["remote-agent"]
+    required_checks: ["integration-test", "e2e-test"]
+
+  security_review_required:
+    description: "보안 검토 필수 - 보안 에이전트 + 운영자 승인"
+    required_approvals: ["security-agent", "operator"]
+    required_checks: ["security-test", "audit-test"]
+
+  impact_test_required:
+    description: "영향도 분석 정확도 테스트 필수"
+    required_approvals: []
+    required_checks: ["impact-accuracy-test"]
+
+  auth_test_required:
+    description: "인증 테스트 통과 필수"
+    required_approvals: []
+    required_checks: ["auth-test"]

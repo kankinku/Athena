@@ -1,0 +1,56 @@
+# 데이터 모듈 Autoresearch 템플릿
+# 적용 대상: store 모듈 (특히 마이그레이션 관련)
+
+module_type: data
+iteration_pattern: migration-safe
+
+change_approach:
+  - 새 마이그레이션 추가만 허용 (기존 마이그레이션 수정 절대 금지)
+  - 마이그레이션 버전 번호 순서 확인 (현재 max + 1)
+  - 롤백 SQL 준비 (ALTER TABLE DROP COLUMN 등)
+  - 마이그레이션 업그레이드 테스트 실행
+  - 기존 데이터 호환성 확인
+
+goals:
+  primary: migration-success-rate
+  secondary:
+    - data-integrity
+    - query-performance
+
+rollback_strategy: migration-rollback-then-git-reset
+test_runner: "node --import tsx --test"
+test_file: "src/store/migrations-upgrade.test.ts"
+max_parallel_tests: 1
+test_timeout_minutes: 10
+
+budget:
+  max_wall_clock_minutes: 30
+  max_iterations: 3
+  max_files_changed: 2
+  max_cost_usd: 0.50
+
+allowed_file_patterns:
+  - "src/store/**"
+
+forbidden_actions:
+  - modify_existing_migration_sql
+  - delete_migration_version
+  - drop_column_without_proposal
+  - rename_column_without_proposal
+
+requires_operator_approval: true
+approval_reason: "DB 스키마 변경은 항상 운영자 검토 필요"
+
+safety_checks:
+  - verify-no-existing-migration-modified
+  - verify-version-sequence
+  - prepare-rollback-sql
+  - run-migration-upgrade-test
+  - verify-data-integrity
+
+on_failure:
+  - run-rollback-sql
+  - git-stash-changes
+  - verify-db-still-functional
+  - create-improvement-proposal
+  - notify-operator

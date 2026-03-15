@@ -1,5 +1,5 @@
 {
-  "last_turn_at": "2026-03-14T13:11:04.407Z",
-  "turn_count": 82,
-  "last_agent_output": "맞습니다. **핵심 원인은 그거에 가깝습니다.**\n\n정확히는 두 층이 분리돼 있습니다.\n\n- `Athena.exe` 런타임은 `C:\\snapshot\\...` 를 **자기 내부 가상"
+  "last_turn_at": "2026-03-14T13:31:09.376Z",
+  "turn_count": 86,
+  "last_agent_output": "고쳤습니다. 원인은 입력줄이 문자를 `useInput`으로 한 글자씩 직접 붙이고 있어서, 한글 IME 조합 완료 시점과 `space` 입력 시점이 서로 어긋난 것이었습니다.\n\n수"
 }

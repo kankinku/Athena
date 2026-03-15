@@ -1,0 +1,50 @@
+# 인프라 모듈 Autoresearch 템플릿
+# 적용 대상: remote, providers 모듈
+
+module_type: infra
+iteration_pattern: safety-first
+
+change_approach:
+  - 변경 전 현재 연결 상태 스냅샷
+  - 최소 단위 변경 적용
+  - 연결 테스트 실행
+  - E2E 경로 검증 (가능한 경우)
+
+goals:
+  primary: execution-success-rate
+  secondary:
+    - error-recovery-time
+    - connection-stability
+
+rollback_strategy: git-reset-hard
+test_runner: "node --import tsx --test"
+max_parallel_tests: 1
+test_timeout_minutes: 10
+
+budget:
+  max_wall_clock_minutes: 45
+  max_iterations: 5
+  max_files_changed: 3
+  max_cost_usd: 0.50
+
+allowed_file_patterns:
+  - "src/remote/**"
+  - "src/providers/**"
+
+forbidden_actions:
+  - modify_auth_files
+  - modify_ssh_key_handling
+  - lower_isolation_level
+  - bypass_security_policy
+
+safety_checks:
+  - verify-allowed-paths
+  - no-auth-file-modification
+  - no-key-file-modification
+  - run-remote-tests
+
+on_failure:
+  - git-stash-changes
+  - verify-connection-still-works
+  - create-improvement-proposal
+  - notify-operator-if-auth-related

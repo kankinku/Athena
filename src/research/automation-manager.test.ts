@@ -13,7 +13,7 @@ import { TeamOrchestrator } from "./team-orchestrator.js";
 import { TeamStore } from "./team-store.js";
 import { SimulationRunner } from "./simulation-runner.js";
 
-function createCharter() {
+function createCharter(overrides: Record<string, unknown> = {}) {
   return {
     experimentId: "exp-auto-1",
     proposalId: "proposal-auto-1",
@@ -25,6 +25,7 @@ function createCharter() {
     budget: { maxWallClockMinutes: 10, maxConcurrentRuns: 1 },
     rollbackPlan: "revert",
     description: "automation retry test",
+    ...overrides,
   };
 }
 
@@ -93,10 +94,101 @@ test("automation manager finalizes finished simulations and records reporting st
     const journal = teamStore.listActionJournal(session.id, run.id);
 
     assert.ok(updates.some((item) => item.id === run.id));
+    // Zero-exit without evaluation metrics is correctly classified as inconclusive
     assert.equal(simulation?.status, "inconclusive");
     assert.equal(refreshedRun?.currentStage, "reporting");
     assert.equal((refreshedRun?.latestOutput as { outcomeStatus?: string } | undefined)?.outcomeStatus, "inconclusive");
     assert.ok(journal.some((entry) => entry.actionType === "simulation_finalize"));
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
+
+test("automation manager marks worse zero-exit runs as regressions", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-automation-regression-"));
+  process.env.ATHENA_HOME = home;
+
+  try {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const session = sessionStore.createSession("openai", "gpt-5.4");
+    const memoryStore = new MemoryStore(session.id);
+    const graphMemory = new GraphMemory(memoryStore);
+    const orchestrator = new TeamOrchestrator(teamStore, graphMemory, () => session.id);
+
+    const run = orchestrator.startRun("automation regression test");
+    teamStore.configureAutomation(run.id, {
+      automationPolicy: {
+        ...run.automationPolicy,
+        mode: "supervised-auto",
+        requireProposalApproval: false,
+        requireExperimentApproval: false,
+        requireRevisitApproval: false,
+      },
+    });
+    orchestrator.recordProposalBrief(run.id, {
+      proposalId: "proposal-auto-regression",
+      title: "Regression proposal",
+      summary: "A run that exits cleanly but regresses",
+      targetModules: ["trainer"],
+      expectedGain: "moderate",
+      expectedRisk: "low",
+      codeChangeScope: ["config"],
+      status: "candidate",
+      experimentBudget: { maxWallClockMinutes: 5 },
+      stopConditions: [],
+      reconsiderConditions: [],
+      claimIds: [],
+    });
+
+    const runner = new SimulationRunner(
+      {
+        execBackground: async () => ({ machineId: "local", pid: 5432, logPath: "regression.log" }),
+        isRunning: async () => false,
+        removeBackgroundProcess: () => {},
+        readExitCode: async () => 0,
+        tail: async () => "loss got worse",
+      } as never,
+      { exec: async () => ({ stdout: "", stderr: "", code: 0 }) } as never,
+      {
+        getTaskSummary: (taskId: string) => taskId === "baseline-task"
+          ? { loss: { latest: 0.8, count: 4 } }
+          : { loss: { latest: 1.1, count: 4 } },
+      } as never,
+      { collectAll: async () => {}, removeSource: () => {} } as never,
+      { createBranch: async () => undefined } as never,
+      teamStore,
+      () => session.id,
+      () => ({ totalCostUsd: 0, lastInputTokens: 0 }),
+    );
+
+    const launch = await runner.launch(createCharter({
+      proposalId: "proposal-auto-regression",
+      baselineTaskId: "baseline-task",
+      experimentId: "exp-auto-regression",
+    }));
+    const manager = new ResearchAutomationManager(
+      teamStore,
+      orchestrator,
+      runner,
+      {
+        isRunning: async () => false,
+        readExitCode: async () => 0,
+        tail: async () => "loss got worse",
+        removeBackgroundProcess: () => {},
+      } as never,
+      { collectAll: async () => {}, removeSource: () => {} } as never,
+    );
+
+    await manager.tickSession(session.id);
+
+    const simulation = teamStore.getSimulationRun(launch.simulationId);
+    const refreshedRun = teamStore.getTeamRun(run.id);
+
+    assert.equal(simulation?.status, "regression");
+    assert.equal(refreshedRun?.workflowState, "running");
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

@@ -117,7 +117,14 @@ export function buildResultDecision(
     simulationId: result.experimentId,
     decisionType,
     decisionSummary: summarizeResultDecision(result, decisionType, options.proposalTitle),
-    confidence: result.outcomeStatus === "keep" ? 0.82 : result.outcomeStatus === "budget_exceeded" ? 0.55 : 0.68,
+    confidence:
+      result.outcomeStatus === "success" || result.outcomeStatus === "keep"
+        ? 0.82
+        : result.outcomeStatus === "budget_exceeded"
+          ? 0.55
+          : result.outcomeStatus === "regression"
+            ? 0.74
+            : 0.68,
     reasonTags,
     createdAt: Date.now(),
     createdBy: options.createdBy ?? "system:decision-engine",
@@ -239,9 +246,12 @@ function classifyProposalDecision(score: number, risk: number): DecisionType {
 
 function classifyResultDecision(outcome: ExperimentResult["outcomeStatus"]): DecisionType {
   switch (outcome) {
+    case "success":
     case "keep":
     case "shadow_win":
       return "adopt";
+    case "regression":
+      return "revisit";
     case "inconclusive":
       return "defer";
     case "budget_exceeded":
@@ -268,8 +278,16 @@ function classifyProposalReasonTags(scorecard: ProposalScorecard, decisionType: 
 
 function classifyResultReasonTags(result: ExperimentResult): DecisionReasonTag[] {
   const tags: DecisionReasonTag[] = [];
-  if (result.outcomeStatus === "keep") tags.push("successful_validation", "stable_simulation");
-  if (result.outcomeStatus === "discard" || result.outcomeStatus === "crash") tags.push("simulation_negative");
+  if (result.outcomeStatus === "success" || result.outcomeStatus === "keep") {
+    tags.push("successful_validation", "stable_simulation");
+  }
+  if (
+    result.outcomeStatus === "discard"
+    || result.outcomeStatus === "regression"
+    || result.outcomeStatus === "crash"
+  ) {
+    tags.push("simulation_negative");
+  }
   if (result.outcomeStatus === "budget_exceeded") tags.push("budget_exceeded", "needs_more_evidence", "resource_mismatch");
   if (result.outcomeStatus === "superseded") tags.push("superseded_by_better_option");
   if (result.outcomeStatus === "inconclusive") tags.push("needs_more_evidence");

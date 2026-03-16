@@ -1,10 +1,13 @@
 import { Client } from "ssh2";
 import { exec as cpExec, spawn } from "node:child_process";
-import { readFileSync, openSync, closeSync, writeFileSync } from "node:fs";
+import { readFileSync, openSync, closeSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname, posix } from "node:path";
 import { shellQuote, formatError } from "../ui/format.js";
 import {
-  createTempLogPath,
+  buildBackgroundExitCommand,
+  createManagedLocalLogPath,
+  createManagedRemoteLogPath,
   getExitFilePath,
   getLocalShell,
   getLocalShellCommand,
@@ -244,7 +247,19 @@ export class ConnectionPool {
   ): Promise<{ pid: number; logPath: string }> {
     this.securityManager?.assertCommandAllowed(command, { ...securityContext, machineId });
 
-    const log = logPath ?? createTempLogPath();
+    const log = machineId === "local"
+      ? createManagedLocalLogPath(logPath)
+      : createManagedRemoteLogPath(logPath);
+    const exitPath = getExitFilePath(log);
+    const pathContext: SecurityExecutionContext = {
+      ...securityContext,
+      machineId,
+      toolName: securityContext.toolName ?? "remote_exec_background",
+      toolFamily: "filesystem",
+      networkAccess: securityContext.networkAccess ?? machineId !== "local",
+    };
+    this.securityManager?.assertPathAllowed(log, "write", pathContext);
+    this.securityManager?.assertPathAllowed(exitPath, "write", pathContext);
 
     if (machineId === "local") {
       return this.execBackgroundLocal(command, log);
@@ -253,7 +268,10 @@ export class ConnectionPool {
     // Remote: use nohup + & over SSH (SSH channels close cleanly)
     // PYTHONUNBUFFERED ensures Python flushes stdout immediately for live metric capture
     // Write exit code to .exit file so we can retrieve it later (can't use `wait` from a different shell)
-    const wrappedCmd = `PYTHONUNBUFFERED=1 nohup sh -c '${command.replace(/'/g, "'\\''")}; echo $? > ${log}.exit' > ${log} 2>&1 & echo $!`;
+    const wrappedCmd = [
+      `mkdir -p ${shellQuote(posix.dirname(log))}`,
+      `PYTHONUNBUFFERED=1 nohup sh -c ${shellQuote(buildBackgroundExitCommand(command, log, "linux"))} > ${shellQuote(log)} 2>&1 & echo $!`,
+    ].join(" && ");
     const result = await this.execRemoteUnchecked(machineId, wrappedCmd);
     const pid = parseInt(result.stdout.trim().split("\n").pop() ?? "", 10);
     if (isNaN(pid)) {
@@ -271,6 +289,8 @@ export class ConnectionPool {
     return new Promise((resolve, reject) => {
       let logFd: number | null = null;
       try {
+        mkdirSync(dirname(logPath), { recursive: true });
+
         // Open the log file for writing
         logFd = openSync(logPath, "w");
 
@@ -292,6 +312,14 @@ export class ConnectionPool {
           return;
         }
 
+        // Write .pid marker for recovery — if parent dies, recovery can check PID liveness
+        const pidPath = exitPath.replace(/\.exit$/, ".pid");
+        try {
+          writeFileSync(pidPath, String(pid), "utf8");
+        } catch {
+          // best effort
+        }
+
         child.once("exit", (code, signal) => {
           const exitCode = typeof code === "number"
             ? code
@@ -302,6 +330,12 @@ export class ConnectionPool {
             writeFileSync(exitPath, String(exitCode), "utf8");
           } catch {
             // best effort
+          }
+          // Clean up .pid marker now that .exit is written
+          try {
+            unlinkSync(pidPath);
+          } catch {
+            // best effort — .pid may already be gone
           }
         });
 
@@ -382,18 +416,82 @@ export class ConnectionPool {
         const parsed = Number.parseInt(value.trim(), 10);
         return Number.isNaN(parsed) ? null : parsed;
       } catch {
+        // .exit 파일이 없으면 .pid 파일로 프로세스 liveness 확인
+        const pidPath = exitPath.replace(/\.exit$/, ".pid");
+        try {
+          const pidValue = await readFile(pidPath, "utf8");
+          const pid = Number.parseInt(pidValue.trim(), 10);
+          if (!Number.isNaN(pid)) {
+            try {
+              process.kill(pid, 0); // liveness check — 프로세스가 아직 살아있음
+              return null;          // 아직 실행 중이므로 exit code 없음
+            } catch {
+              // 프로세스는 죽었지만 .exit를 남기지 못한 경우 (parent crash)
+              // crash 상태를 기록하고 exit code 1을 합성
+              try {
+                writeFileSync(exitPath, "1", "utf8");
+                unlinkSync(pidPath);
+              } catch { /* best effort */ }
+              return 1;
+            }
+          }
+        } catch {
+          // .pid도 없음 — 완전히 정보 없음
+        }
         return null;
       }
     }
 
-    const result = await this.exec(
+    const pidPath = exitPath.replace(/\.exit$/, ".pid");
+    const exitResult = await this.exec(
       machineId,
-      `[ -f ${shellQuote(exitPath)} ] && cat ${shellQuote(exitPath)} || true`,
+      `[ -f ${shellQuote(exitPath)} ] && cat ${shellQuote(exitPath)} || echo "__NO_EXIT__"`,
       undefined,
       context,
     );
-    const parsed = Number.parseInt(result.stdout.trim(), 10);
-    return Number.isNaN(parsed) ? null : parsed;
+    const exitValue = exitResult.stdout.trim();
+    const parsedExit = Number.parseInt(exitValue, 10);
+    if (!Number.isNaN(parsedExit)) {
+      return parsedExit;
+    }
+
+    if (exitValue !== "" && exitValue !== "__NO_EXIT__") {
+      return null;
+    }
+
+    const pidResult = await this.exec(
+      machineId,
+      `[ -f ${shellQuote(pidPath)} ] && cat ${shellQuote(pidPath)} || echo "__NO_PID__"`,
+      undefined,
+      context,
+    );
+    const pidValue = pidResult.stdout.trim();
+    const pid = Number.parseInt(pidValue, 10);
+    if (Number.isNaN(pid)) {
+      return null;
+    }
+
+    const liveness = await this.exec(
+      machineId,
+      `kill -0 ${pid} 2>/dev/null && echo "ALIVE" || echo "DEAD"`,
+      undefined,
+      context,
+    );
+    if (liveness.stdout.trim() === "ALIVE") {
+      return null;
+    }
+
+    try {
+      await this.exec(
+        machineId,
+        `printf '1' > ${shellQuote(exitPath)}; rm -f ${shellQuote(pidPath)}`,
+        undefined,
+        context,
+      );
+    } catch {
+      // best effort
+    }
+    return 1;
   }
 
   getStatus(machineId: string): ConnectionStatus {

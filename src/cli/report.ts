@@ -1,26 +1,29 @@
 /**
- * `athena report [session-id]` — generate an experiment writeup from session data.
+ * `athena report [id]` — generate an experiment writeup from session or run data.
+ * Accepts either a session-id or a run-id. Run-ids are resolved to their session.
  * Outputs markdown to stdout (pipeable: `athena report > results.md`)
+ *
+ * Without a provider, outputs raw structured data instead of an AI-generated writeup.
  */
 
 import { Effect, Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
-const sessionId = Args.text({ name: "session-id" }).pipe(
-  Args.withDescription("Session ID to report on (default: most recent)"),
+const targetArg = Args.text({ name: "id" }).pipe(
+  Args.withDescription("Session ID or Run ID to report on (default: most recent session)"),
   Args.optional,
 );
 
 const provider = Options.choice("provider", ["claude", "openai"]).pipe(
   Options.withAlias("P"),
-  Options.withDescription("Provider to use for generating the writeup"),
+  Options.withDescription("Provider to use for generating the writeup (omit for raw data)"),
   Options.optional,
 );
 
 export const report = Command.make(
   "report",
-  { sessionId, provider },
-  ({ sessionId: sessionIdOpt, provider: providerOpt }) =>
+  { targetArg, provider },
+  ({ targetArg: targetOpt, provider: providerOpt }) =>
     Effect.promise(async () => {
       const { SessionStore } = await import("../store/session-store.js");
       const { TeamStore } = await import("../research/team-store.js");
@@ -32,17 +35,26 @@ export const report = Command.make(
       const store = new SessionStore(agentId);
       const teamStore = new TeamStore();
 
-      // Resolve session
-      const targetId = Option.getOrUndefined(sessionIdOpt);
+      // Resolve id — accepts session-id OR run-id
+      const targetId = Option.getOrUndefined(targetOpt);
       let resolvedId: string;
 
       if (targetId) {
+        // Try as session-id first
         const session = store.getSession(targetId);
-        if (!session) {
-          process.stderr.write(`Session "${targetId}" not found.\n`);
-          process.exit(1);
+        if (session) {
+          resolvedId = targetId;
+        } else {
+          // Try as run-id — resolve to its session
+          const run = teamStore.getTeamRun(targetId);
+          if (run) {
+            resolvedId = run.sessionId;
+            process.stderr.write(`Resolved run "${targetId}" to session "${resolvedId}"\n`);
+          } else {
+            process.stderr.write(`"${targetId}" not found as session or run ID.\n`);
+            process.exit(1);
+          }
         }
-        resolvedId = targetId;
       } else {
         const sessions = store.listSessions(1);
         if (sessions.length === 0) {
@@ -53,9 +65,7 @@ export const report = Command.make(
         process.stderr.write(`Using most recent session: ${resolvedId}\n`);
       }
 
-      // Gather session transcript and structured research state
-      const messages = store.getMessages(resolvedId, 10000);
-
+      // Gather structured research state
       const reportInput = buildResearchReportInput(resolvedId, teamStore, store, {
         transcriptLimit: 400,
       });
@@ -66,13 +76,26 @@ export const report = Command.make(
 
       // Create a runtime to get a provider for the writeup
       const providerName = Option.getOrUndefined(providerOpt) as "claude" | "openai" | undefined;
-      const runtime = await createRuntime({ provider: providerName });
 
-      const activeProvider = runtime.orchestrator.currentProvider;
+      // Graceful fallback: if no provider is configured, output raw data
+      let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined;
+      try {
+        runtime = await createRuntime({ provider: providerName });
+      } catch {
+        // Runtime creation failed — fall through to raw output
+      }
+
+      const activeProvider = runtime?.orchestrator.currentProvider;
       if (!activeProvider) {
-        process.stderr.write("No active provider. Authenticate first with 'athena auth login'.\n");
-        runtime.cleanup();
-        process.exit(1);
+        if (providerName) {
+          process.stderr.write(`Provider "${providerName}" not available. Outputting raw report data.\n`);
+        } else {
+          process.stderr.write("No active provider. Outputting raw report data (use -P to generate AI writeup).\n");
+        }
+        process.stdout.write(reportInput);
+        process.stdout.write("\n");
+        runtime?.cleanup();
+        return;
       }
 
       process.stderr.write("Generating report...\n");
@@ -90,7 +113,7 @@ export const report = Command.make(
         process.stdout.write("\n");
       } finally {
         await activeProvider.closeSession(session).catch(() => {});
-        runtime.cleanup();
+        runtime!.cleanup();
       }
     }),
 );

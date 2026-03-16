@@ -284,6 +284,12 @@ export interface AthenaRuntime {
   projectConfig: ReturnType<typeof findProjectConfig>;
   agentName?: string;
   cleanup: () => void;
+  /**
+   * 이전 세션에서 중단된 active run을 탐지하고 자동 복구한다.
+   * 세션 시작 시(--continue, --resume) 또는 첫 프롬프트 시 호출.
+   * 복구된 run ID 목록을 반환한다.
+   */
+  recoverInterruptedRuns: (sessionId: string) => Promise<string[]>;
 }
 
 export interface RuntimeOptions {
@@ -512,6 +518,13 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Athen
       triggerScheduler.stopAll();
       connPool.disconnectAll();
     },
+    recoverInterruptedRuns: async (sessionId: string) => {
+      const runs = teamStore.listRecentTeamRuns(sessionId, 50);
+      const interrupted = runs.filter((r) => r.status === "active");
+      if (interrupted.length === 0) return [];
+      const recovered = await automationManager.recoverSession(sessionId);
+      return recovered.map((r) => r.id);
+    },
   };
 }
 
@@ -630,7 +643,7 @@ function registerCoreTools(deps: CoreToolDeps): void {
     createReadFileTool(deps.connectionPool, deps.securityManager),
     createWriteFileTool(deps.connectionPool, deps.securityManager),
     createPatchFileTool(deps.connectionPool, deps.securityManager),
-    createWebFetchTool(),
+    createWebFetchTool(deps.securityManager),
     ...createMemoryTools(deps.memoryStore),
     createConsultTool(
       () => deps.orchestrator.currentProvider?.name ?? null,

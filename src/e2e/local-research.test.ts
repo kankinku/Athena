@@ -101,6 +101,7 @@ test("local research e2e: launch, finish, and finalize a local simulation", asyn
 
     assert.ok(updates.some((item) => item.id === run.id));
     assert.equal(launched.taskId.startsWith("local:"), true);
+    // Zero-exit without evaluation metrics is correctly classified as inconclusive
     assert.equal(simulation?.status, "inconclusive");
     assert.equal(refreshedRun?.currentStage, "reporting");
     assert.equal((refreshedRun?.latestOutput as { outcomeStatus?: string } | undefined)?.outcomeStatus, "inconclusive");

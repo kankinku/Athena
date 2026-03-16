@@ -65,6 +65,15 @@ export function App({
             process.stderr.write(`Failed to recover automation: ${err}\n`);
           });
         }
+      } else {
+        // Fresh start — 이전 세션의 중단된 연구 run이 있으면 자동 복구
+        const lastSessions = rt.orchestrator.sessionStore.listSessions(1);
+        if (lastSessions.length > 0) {
+          const recovered = await rt.recoverInterruptedRuns(lastSessions[0].id).catch(() => [] as string[]);
+          if (recovered.length > 0) {
+            process.stderr.write(`Auto-recovered ${recovered.length} interrupted run(s) from previous session\n`);
+          }
+        }
       }
 
       if (!aborted) setRuntime(rt);

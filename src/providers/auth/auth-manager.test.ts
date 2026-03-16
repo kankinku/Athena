@@ -8,7 +8,8 @@ import { AuthManager } from "./auth-manager.js";
  */
 function createTestManager(): AuthManager {
   const manager = new AuthManager();
-  const tokenStore = manager.tokenStore as unknown as { save: () => void };
+  const tokenStore = manager.tokenStore as unknown as { save: () => void; data: Record<string, unknown> };
+  tokenStore.data = {};
   tokenStore.save = () => {};
   return manager;
 }

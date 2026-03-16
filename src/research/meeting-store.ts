@@ -364,14 +364,15 @@ export class MeetingStore {
       `INSERT INTO execution_plans (
          id, proposal_id, meeting_id,
          task_assignments_json, required_tests_json,
-         rollback_plan, feature_flags_json,
+         rollback_plan, feature_flags_json, merge_gates_json,
          status, started_at, completed_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          task_assignments_json = excluded.task_assignments_json,
          required_tests_json = excluded.required_tests_json,
          rollback_plan = excluded.rollback_plan,
          feature_flags_json = excluded.feature_flags_json,
+         merge_gates_json = excluded.merge_gates_json,
          status = excluded.status,
          started_at = excluded.started_at,
          completed_at = excluded.completed_at,
@@ -384,6 +385,7 @@ export class MeetingStore {
       JSON.stringify(plan.requiredTests),
       plan.rollbackPlan,
       JSON.stringify(plan.featureFlags),
+      JSON.stringify(plan.mergeGates ?? {}),
       plan.status,
       plan.startedAt ?? null,
       plan.completedAt ?? null,
@@ -480,7 +482,23 @@ export class MeetingStore {
     const rows = db.prepare(
       "SELECT * FROM verification_results WHERE proposal_id = ? ORDER BY verified_at DESC",
     ).all(proposalId) as Record<string, unknown>[];
-    return rows.map((row) => ({
+    return rows.map((row) => this.rowToVerificationResult(row));
+  }
+
+  getVerificationResult(verificationId: string): VerificationResult | null {
+    const db = getDb();
+    const row = db.prepare(
+      "SELECT * FROM verification_results WHERE id = ?",
+    ).get(verificationId) as Record<string, unknown> | undefined;
+    return row ? this.rowToVerificationResult(row) : null;
+  }
+
+  getLatestVerification(proposalId: string): VerificationResult | null {
+    return this.listVerificationResults(proposalId)[0] ?? null;
+  }
+
+  private rowToVerificationResult(row: Record<string, unknown>): VerificationResult {
+    return {
       verificationId: row.id as string,
       proposalId: row.proposal_id as string,
       executionPlanId: row.execution_plan_id as string,
@@ -490,11 +508,7 @@ export class MeetingStore {
       remeetingReason: (row.remeeting_reason as string | null) ?? undefined,
       verifiedAt: row.verified_at as number,
       createdAt: row.created_at as number,
-    }));
-  }
-
-  getLatestVerification(proposalId: string): VerificationResult | null {
-    return this.listVerificationResults(proposalId)[0] ?? null;
+    };
   }
 
   // ── Module Impact Cache ───────────────────────────────────────────────────

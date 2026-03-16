@@ -207,8 +207,8 @@ athena research iterations <run-id>   # per-cycle cascade history
 athena research proposals
 athena research next-actions
 
-# 4. generate a report
-athena report <run-id>
+# 4. generate a report (accepts session-id or run-id)
+athena report <session-id|run-id>
 ```
 
 ## CLI Reference
@@ -235,7 +235,7 @@ athena proposal ...
 athena meeting ...
 athena dashboard ...
 athena history ...
-athena report [session-id]
+athena report [session-id|run-id]
 ```
 
 **Research operator views:**
@@ -268,7 +268,7 @@ athena report [session-id]
 | `athena research checklist` | Supervised production checklist |
 | `athena research soak` | Soak harness artifacts |
 | `athena research git-notify` | Git-triggered change detection |
-| `athena report [session-id]` | Generate an operator-facing report |
+| `athena report [session-id\|run-id]` | Generate an operator-facing report |
 
 ## Remote Execution
 
@@ -295,7 +295,7 @@ The TUI provides live visibility into the running loop:
 
 ## Reports
 
-`athena report <run-id>` generates a structured operator report including:
+`athena report <session-id|run-id>` generates a structured operator report including:
 
 - run summary and workflow state
 - **Iteration Cycles** section — full cascade history with reasons and transitions

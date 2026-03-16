@@ -32,6 +32,12 @@ import type {
 } from "./contracts.js";
 import type { TeamStore } from "./team-store.js";
 
+function inferOptimizationGoalFromMetric(metricName: string): "minimize" | "maximize" {
+  return /(loss|error|latency|time|memory|cost|perplexity|bpb|wer|cer)/i.test(metricName)
+    ? "minimize"
+    : "maximize";
+}
+
 export class TeamOrchestrator {
   constructor(
     private teamStore: TeamStore,
@@ -331,11 +337,16 @@ export class TeamOrchestrator {
     const enrichedResult: ExperimentResult = {
       ...result,
       guardrailTrialRecommended:
-        result.outcomeStatus !== "keep"
-        && Object.values(result.afterMetrics).some((value, index) => {
-          const before = Object.values(result.beforeMetrics)[index];
-          return typeof before === "number" ? value < before : false;
-        }),
+        !["success", "keep", "shadow_win"].includes(result.outcomeStatus)
+        && (() => {
+          const charter = this.teamStore.getSimulationRun(result.experimentId)?.charter;
+          const goal = charter?.optimizationGoal ?? inferOptimizationGoalFromMetric(charter?.evaluationMetric ?? "");
+          return Object.values(result.afterMetrics).some((value, index) => {
+            const before = Object.values(result.beforeMetrics)[index];
+            if (typeof before !== "number") return false;
+            return goal === "minimize" ? value > before : value < before;
+          });
+        })(),
     };
     const decision = buildResultDecision(enrichedResult, {
       proposalTitle: proposal?.title,
@@ -348,10 +359,10 @@ export class TeamOrchestrator {
       weightedScore: proposal?.scorecard?.weightedScore,
       outcomeStatus: enrichedResult.outcomeStatus,
       falsePositive: proposal?.scorecard !== undefined
-        ? proposal.scorecard.weightedScore >= 0.7 && enrichedResult.outcomeStatus !== "keep"
+        ? proposal.scorecard.weightedScore >= 0.7 && !["success", "keep", "shadow_win"].includes(enrichedResult.outcomeStatus)
         : undefined,
       falseNegative: proposal?.scorecard !== undefined
-        ? proposal.scorecard.weightedScore < 0.62 && enrichedResult.outcomeStatus === "keep"
+        ? proposal.scorecard.weightedScore < 0.62 && ["success", "keep", "shadow_win"].includes(enrichedResult.outcomeStatus)
         : undefined,
     };
     this.teamStore.saveDecisionRecord(run.sessionId, decision);

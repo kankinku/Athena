@@ -30,14 +30,17 @@ test("soak harness flags unrecoverable scenarios and builds a checklist", () => 
   assert.match(checklist, /multi-host: status=fail pass=false/);
 });
 
-test("soak harness marks unavailable topologies as blocked", () => {
+test("soak harness marks unavailable topologies as blocked and smoke-only as synthetic", () => {
   const artifact = createSoakArtifact(["local"], buildEnvironmentAwareScenarios([], { localSmokePassed: true }));
   const checklist = buildSupervisedProductionChecklist(artifact.results);
 
-  assert.equal(artifact.results[0]?.status, "pass");
+  // Smoke-only local scenario is correctly marked as synthetic (not a real soak)
+  assert.equal(artifact.results[0]?.status, "synthetic");
   assert.equal(artifact.results[1]?.status, "blocked");
   assert.equal(artifact.results[2]?.status, "blocked");
-  assert.match(checklist, /overall=blocked/);
+  assert.equal(artifact.synthetic, true);
+  assert.match(checklist, /overall=synthetic_only/);
+  assert.match(checklist, /WARNING: synthetic results present/);
   assert.match(checklist, /single_remote: status=blocked/);
   assert.match(checklist, /multi_host: status=blocked/);
 });

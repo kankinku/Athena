@@ -794,6 +794,13 @@ const migrations: Migration[] = [
         ON iteration_cycles(session_id, created_at);
     `,
   },
+  // ─── v0.4.4: Persist merge gates in execution plans ──────────────────────
+  {
+    version: 24,
+    sql: `
+      ALTER TABLE execution_plans ADD COLUMN merge_gates_json TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

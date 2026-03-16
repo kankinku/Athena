@@ -51,7 +51,7 @@ const TOOL_RISK_MAP: Record<string, ToolRiskLevel> = {
   "compare_runs": "safe",
   "task_output": "safe",
   "list_machines": "safe",
-  "web_fetch": "safe",
+  "web_fetch": "reviewable",
   "consult": "safe",
 
   // reviewable — 수정 가능, 사전 검증 필요

@@ -42,6 +42,32 @@ export function createTempLogPath(prefix = "athena", platform = process.platform
   return join(tmpdir(), `${prefix}-${Date.now()}-${suffix}.log`);
 }
 
+function sanitizeManagedLogLabel(requestedPath?: string): string {
+  if (!requestedPath) return "athena";
+  const leaf = requestedPath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .pop() ?? requestedPath;
+  const stem = leaf.replace(/\.[^.]+$/u, "");
+  const sanitized = stem
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return sanitized.length > 0 ? sanitized : "athena";
+}
+
+export function createManagedLocalLogPath(requestedPath?: string): string {
+  const suffix = randomBytes(4).toString("hex");
+  const label = sanitizeManagedLogLabel(requestedPath);
+  return join(tmpdir(), "athena-logs", `${label}-${Date.now()}-${suffix}.log`);
+}
+
+export function createManagedRemoteLogPath(requestedPath?: string): string {
+  const suffix = randomBytes(4).toString("hex");
+  const label = sanitizeManagedLogLabel(requestedPath);
+  return `/tmp/athena-logs/${label}-${Date.now()}-${suffix}.log`;
+}
+
 export function getExitFilePath(logPath: string): string {
   return `${logPath}.exit`;
 }

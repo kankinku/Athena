@@ -117,6 +117,16 @@ function printMode(opts: PrintOpts): Effect.Effect<void> {
       await runtime.orchestrator.setModel(opts.model);
     }
 
+    // 이전 세션의 중단된 연구 run 자동 복구
+    // Note: currentSession은 아직 생성 전이거나 새 세션이므로 이전 세션 ID를 직접 조회
+    const lastSessions = runtime.orchestrator.sessionStore.listSessions(1);
+    if (lastSessions.length > 0) {
+      const recovered = await runtime.recoverInterruptedRuns(lastSessions[0].id).catch(() => []);
+      if (recovered.length > 0) {
+        process.stderr.write(`Recovered ${recovered.length} interrupted run(s): ${recovered.join(", ")}\n`);
+      }
+    }
+
     try {
       for await (const event of runtime.orchestrator.send(opts.prompt, attachments.length > 0 ? attachments : undefined)) {
         if (event.type === "text" && event.delta) {

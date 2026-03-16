@@ -30,7 +30,9 @@ export type ProposalReviewAction = "approve" | "scope_trial" | "defer" | "revisi
 
 export type ExperimentOutcomeStatus =
   | "baseline"
+  | "success"
   | "keep"
+  | "regression"
   | "discard"
   | "crash"
   | "pending"
@@ -306,7 +308,13 @@ export interface ExperimentCharter {
   repoPath?: string;
   branchName?: string;
   command: string;
+  baseline?: string;
   evaluationMetric: string;
+  optimizationGoal?: "minimize" | "maximize";
+  successThreshold?: number;
+  regressThreshold?: number;
+  stopCondition?: string;
+  revisitCondition?: string;
   metricNames?: string[];
   metricPatterns?: Record<string, string>;
   patchScope: string[];

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { SecurityManager } from "./policy.js";
 
 test("SecurityManager blocks obviously destructive commands by default", () => {
@@ -155,4 +157,45 @@ test("SecurityManager enforces role-based operator actions", () => {
   assert.equal(allowed.verdict, "allow");
   assert.equal(blocked.verdict, "block");
   assert.match(blocked.reason, /actor tier operator_observer/i);
+});
+
+test("SecurityManager protects Athena secret config files by default", () => {
+  const security = new SecurityManager();
+
+  const hubConfig = security.evaluatePath(join(homedir(), ".athena", "hub.json"), "read");
+  const machinesConfig = security.evaluatePath(join(homedir(), ".athena", "machines.json"), "write");
+
+  assert.equal(hubConfig.verdict, "review");
+  assert.match(hubConfig.reason, /sensitive read path/i);
+  assert.equal(machinesConfig.verdict, "block");
+  assert.match(machinesConfig.reason, /protected write path/i);
+});
+
+test("SecurityManager applies default actor tiers even without an explicit role policy", () => {
+  const security = new SecurityManager();
+
+  const operator = security.evaluateAction("approve", {
+    actorRole: "operator",
+  });
+  const agent = security.evaluateAction("rollback", {
+    actorRole: "agent",
+  });
+
+  assert.equal(operator.verdict, "allow");
+  assert.equal(agent.verdict, "block");
+});
+
+test("web_fetch honors the network capability policy", async () => {
+  const { createWebFetchTool } = await import("../tools/web-fetch.js");
+  const security = new SecurityManager({
+    mode: "enforce",
+    capabilityPolicy: {
+      allowNetworkAccess: false,
+    },
+  });
+  const tool = createWebFetchTool(security);
+
+  const result = JSON.parse(await tool.execute({ url: "https://example.com" })) as { error?: string };
+
+  assert.match(result.error ?? "", /requires approval/i);
 });

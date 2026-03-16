@@ -358,9 +358,10 @@ test("research CLI exposes eval fixtures, soak artifacts, and supervised checkli
     assert.match(evalsOutput, /operator_intervention/);
     assert.match(evalsOutput, /proposal-evidence-floor/);
     assert.match(soakOutput, /artifact\s+/);
-    assert.match(soakOutput, /overall=blocked/);
+    // Soak output now shows synthetic_only (smoke-only is synthetic, not a real soak)
+    assert.match(soakOutput, /overall=synthetic_only/);
     assert.match(checklistOutput, /Athena Supervised Production Checklist/);
-    assert.match(checklistOutput, /overall=blocked/);
+    assert.match(checklistOutput, /overall=synthetic_only/);
     assert.match(checklistOutput, /single_remote: status=blocked/);
   } finally {
     closeDb();

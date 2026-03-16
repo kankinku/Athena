@@ -56,7 +56,7 @@ function buildImprovementProposal(
     priorityScore,
     reviewStatus: priorityScore >= 0.75 ? "queued" : "in_review",
     rollbackPlan: input.rollbackPlan ?? "Revert to prior workflow/policy settings and discard the improvement experiment.",
-    status: input.result.outcomeStatus === "keep" ? "approved" : "proposed",
+    status: input.result.outcomeStatus === "success" || input.result.outcomeStatus === "keep" ? "approved" : "proposed",
     sourceDecisionId: input.decision.decisionId,
     createdAt,
     updatedAt: createdAt,
@@ -73,9 +73,9 @@ function buildImprovementEvaluation(
   improvementId: string | undefined,
   createdAt: number,
 ): ImprovementEvaluationRecord {
-  const outcome = input.result.outcomeStatus === "keep"
+  const outcome = input.result.outcomeStatus === "success" || input.result.outcomeStatus === "keep"
     ? "promising"
-    : input.result.outcomeStatus === "discard" || input.result.outcomeStatus === "crash"
+    : input.result.outcomeStatus === "discard" || input.result.outcomeStatus === "regression" || input.result.outcomeStatus === "crash"
       ? "rollback_required"
       : input.result.outcomeStatus === "budget_exceeded"
         ? "neutral"
@@ -106,8 +106,11 @@ function inferTargetArea(outcome: ExperimentResult["outcomeStatus"]): Improvemen
       return "workflow_guardrail";
     case "inconclusive":
       return "evaluation_strategy";
+    case "regression":
+      return "decision_policy";
     case "discard":
       return "decision_policy";
+    case "success":
     case "keep":
     case "shadow_win":
       return "research_strategy";
@@ -124,8 +127,11 @@ function summarizeImprovementNeed(result: ExperimentResult): string | undefined 
       return "Add stronger workflow guardrails and rollback preparation before launching similar experiments.";
     case "inconclusive":
       return "Improve evaluation criteria so runs produce a decisive result faster.";
+    case "regression":
+      return "Refine redesign and rollback policy so regressions trigger the next iteration sooner.";
     case "discard":
       return "Refine decision policy so weak ideas are filtered before experiment launch.";
+    case "success":
     case "keep":
     case "shadow_win":
       return "Capture the successful pattern as reusable research strategy guidance.";
@@ -142,6 +148,8 @@ function expectedBenefitForOutcome(outcome: ExperimentResult["outcomeStatus"]): 
       return "Fewer broken runs and safer automated execution.";
     case "inconclusive":
       return "Higher decision clarity per experiment.";
+    case "regression":
+      return "Faster redesign after a measured regression.";
     case "discard":
       return "Better pre-filtering of low-value experiments.";
     default:
@@ -170,7 +178,8 @@ function buildPriorityScore(result: ExperimentResult, decision: DecisionRecord):
   let score = 0.45;
   if (result.outcomeStatus === "crash") score += 0.35;
   if (result.outcomeStatus === "budget_exceeded") score += 0.2;
-  if (result.outcomeStatus === "keep" || result.outcomeStatus === "shadow_win") score += 0.25;
+  if (result.outcomeStatus === "success" || result.outcomeStatus === "keep" || result.outcomeStatus === "shadow_win") score += 0.25;
+  if (result.outcomeStatus === "regression") score += 0.2;
   if (result.guardrailTrialRecommended) score += 0.15;
   score += Math.min(0.15, result.surprisingFindings.length * 0.05);
   score += Math.max(0, 0.1 - (decision.confidence * 0.05));

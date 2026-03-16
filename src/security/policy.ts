@@ -106,6 +106,8 @@ function compileRules(patterns: string[] | undefined): CompiledRule[] {
 
 function defaultProtectedPaths(): string[] {
   const athenaAuthDir = normalizePath(join(ATHENA_DIR, "auth"));
+  const athenaHubConfig = normalizePath(join(ATHENA_DIR, "hub.json"));
+  const athenaMachinesConfig = normalizePath(join(ATHENA_DIR, "machines.json"));
   const home = normalizePath(homedir());
   return [
     String.raw`(?:^|/)\.ssh(?:/|$)`,
@@ -113,6 +115,8 @@ function defaultProtectedPaths(): string[] {
     String.raw`(?:^|/)\.kube(?:/|$)`,
     String.raw`(?:^|/)\.config/gcloud(?:/|$)`,
     `${escapeRegex(athenaAuthDir)}(?:/|$)`,
+    `^${escapeRegex(athenaHubConfig)}$`,
+    `^${escapeRegex(athenaMachinesConfig)}$`,
     `${escapeRegex(normalizePath(join(home, ".ssh")))}(?:/|$)`,
     String.raw`^/etc(?:/|$)`,
     String.raw`^/root(?:/|$)`,
@@ -247,9 +251,6 @@ export class SecurityManager {
   evaluateAction(actionClass: SecurityActionClass, context: SecurityExecutionContext = {}): SecurityDecision {
     if (!this.enabled) {
       return { verdict: "allow", reason: "security disabled" };
-    }
-    if (!this.rolePolicy) {
-      return { verdict: "allow", reason: "no role policy configured" };
     }
     const actor = this.resolveActor(context);
     const rule = this.resolveRoleRule(actor.actorTier);

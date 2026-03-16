@@ -440,6 +440,28 @@ export class ChangePipeline {
         throw new Error("Verification must pass before merge");
       }
 
+      // merge gate 검증 — 각 영향 모듈의 gate 조건을 확인
+      if (ctx.executionPlan) {
+        const completedChecks = ctx.verificationResult.testResults
+          .filter((t) => t.outcome === "passed")
+          .map((t) => t.testId);
+        const approvals = options.operatorId ? [options.operatorId] : [];
+        const mergeGateResult = this.executionGate.verifyMergeGates(
+          ctx.executionPlan,
+          completedChecks,
+          approvals,
+        );
+        if (!mergeGateResult.passed) {
+          this.audit(ctx, "merge_gate_blocked", {
+            blockers: mergeGateResult.blockers,
+          });
+          throw new Error(`Merge gate blocked: ${mergeGateResult.blockers.join(", ")}`);
+        }
+        this.audit(ctx, "merge_gates_verified", {
+          checks: mergeGateResult.checks.length,
+        });
+      }
+
       // operator 승인 확인
       if (options.operatorId) {
         this.audit(ctx, "operator_approved", {

@@ -179,11 +179,12 @@ export class ResearchAutomationManager {
     const tail = simulation.logPath
       ? await this.executor.tail(machineId, simulation.logPath, 20).catch(() => "")
       : "";
-    const outcomeStatus = exitCode === null
-      ? "inconclusive"
-      : exitCode === 0
-        ? "inconclusive"
-        : "crash";
+    const outcomeStatus = classifyFinishedSimulationOutcome(
+      simulation.charter,
+      exitCode,
+      beforeMetrics,
+      afterMetrics,
+    );
 
     return {
       experimentId: simulation.id,
@@ -300,4 +301,74 @@ export class ResearchAutomationManager {
       heartbeatAt: Date.now(),
     });
   }
+}
+
+function classifyFinishedSimulationOutcome(
+  charter: SimulationRunRecord["charter"],
+  exitCode: number | null,
+  beforeMetrics: Record<string, number>,
+  afterMetrics: Record<string, number>,
+): ExperimentResult["outcomeStatus"] {
+  if (exitCode === null) return "inconclusive";
+  if (exitCode !== 0) return "crash";
+
+  const metricName = charter.evaluationMetric;
+  const after = afterMetrics[metricName];
+  const before = beforeMetrics[metricName];
+
+  if (typeof after !== "number") {
+    return "inconclusive";
+  }
+
+  const direction = charter.optimizationGoal ?? inferOptimizationGoal(metricName);
+  if (typeof charter.successThreshold === "number" && meetsThreshold(after, charter.successThreshold, direction)) {
+    return "success";
+  }
+  if (typeof charter.regressThreshold === "number" && exceedsRegressionThreshold(after, charter.regressThreshold, direction)) {
+    return "regression";
+  }
+  if (typeof before === "number") {
+    if (isImprovement(after, before, direction)) return "success";
+    if (isRegression(after, before, direction)) return "regression";
+  }
+
+  return "inconclusive";
+}
+
+function inferOptimizationGoal(metricName: string): "minimize" | "maximize" {
+  return /(loss|error|latency|time|memory|cost|perplexity|bpb|wer|cer)/i.test(metricName)
+    ? "minimize"
+    : "maximize";
+}
+
+function meetsThreshold(
+  value: number,
+  threshold: number,
+  direction: "minimize" | "maximize",
+): boolean {
+  return direction === "minimize" ? value <= threshold : value >= threshold;
+}
+
+function exceedsRegressionThreshold(
+  value: number,
+  threshold: number,
+  direction: "minimize" | "maximize",
+): boolean {
+  return direction === "minimize" ? value >= threshold : value <= threshold;
+}
+
+function isImprovement(
+  after: number,
+  before: number,
+  direction: "minimize" | "maximize",
+): boolean {
+  return direction === "minimize" ? after < before : after > before;
+}
+
+function isRegression(
+  after: number,
+  before: number,
+  direction: "minimize" | "maximize",
+): boolean {
+  return direction === "minimize" ? after > before : after < before;
 }

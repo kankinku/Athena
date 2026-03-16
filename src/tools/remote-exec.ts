@@ -75,7 +75,7 @@ export function createRemoteExecBackgroundTool(
         },
         log_path: {
           type: "string",
-          description: "Optional path for stdout/stderr log file",
+          description: "Optional preferred log filename. Athena stores the log inside a managed output directory and returns the actual log_path.",
         },
         metric_names: {
           type: "array",

@@ -105,6 +105,7 @@ test("remote research e2e: remote machine task key and automation finalization a
     assert.equal(launched.taskId, "gpu-1:9001");
     assert.equal(launched.branchName, "exp/remote-branch");
     assert.equal(simulation?.taskKey, "gpu-1:9001");
+    // Zero-exit without evaluation metrics is correctly classified as inconclusive
     assert.equal(simulation?.status, "inconclusive");
     assert.equal(simulation?.logPath, "/remote/athena/run.log");
     assert.equal(refreshedRun?.currentStage, "reporting");

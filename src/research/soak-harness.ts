@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { ATHENA_DIR } from "../paths.js";
 
 export type SoakScenarioLabel = "local_only" | "single_remote" | "multi_host";
-export type SoakScenarioStatus = "pass" | "fail" | "blocked";
+export type SoakScenarioStatus = "pass" | "fail" | "blocked" | "synthetic";
 
 export interface SoakScenario {
   id: string;
@@ -15,6 +15,8 @@ export interface SoakScenario {
   unrecoverable: number;
   requiredRemoteMachines?: number;
   blockedReason?: string;
+  /** true = 결과가 실제 실행이 아닌 합성 데이터 */
+  synthetic?: boolean;
   notes?: string[];
 }
 
@@ -33,6 +35,8 @@ export interface SoakArtifact {
   machineIds: string[];
   remoteMachineIds: string[];
   results: SoakChecklistResult[];
+  /** true = artifact 전체가 합성 데이터 기반이며 릴리즈 게이트로 사용 불가 */
+  synthetic: boolean;
 }
 
 const SOAK_ARTIFACT_PATH = join(ATHENA_DIR, "supervised-production-soak.json");
@@ -47,6 +51,19 @@ export function evaluateSoakScenario(scenario: SoakScenario): SoakChecklistResul
       recoveryRate: 0,
       rollbackRate: 0,
       notes: [...(scenario.notes ?? []), scenario.blockedReason],
+    };
+  }
+
+  // 합성 시나리오는 절대 pass로 판정하지 않는다
+  if (scenario.synthetic) {
+    return {
+      scenarioId: scenario.id,
+      status: "synthetic",
+      pass: false,
+      completionRate: 0,
+      recoveryRate: 0,
+      rollbackRate: 0,
+      notes: [...(scenario.notes ?? []), "synthetic_data_not_real_soak"],
     };
   }
 
@@ -75,15 +92,20 @@ export function evaluateSoakScenario(scenario: SoakScenario): SoakChecklistResul
 }
 
 export function buildSupervisedProductionChecklist(results: SoakChecklistResult[]): string {
-  const overall = results.every((result) => result.status === "pass")
-    ? "green"
-    : results.some((result) => result.status === "fail")
-      ? "red"
-      : "blocked";
+  const hasSynthetic = results.some((result) => result.status === "synthetic");
+  const hasRealPass = results.some((result) => result.status === "pass");
+  const overall = hasSynthetic && !hasRealPass
+    ? "synthetic_only"
+    : results.every((result) => result.status === "pass")
+      ? "green"
+      : results.some((result) => result.status === "fail")
+        ? "red"
+        : "blocked";
   const lines = [
     "# Athena Supervised Production Checklist",
     "",
     `overall=${overall}`,
+    ...(hasSynthetic ? ["WARNING: synthetic results present — not valid for release gate signoff"] : []),
     ...results.map((result) =>
       `- ${result.scenarioId}: status=${result.status} pass=${result.pass} completion=${result.completionRate} recovery=${result.recoveryRate} rollback=${result.rollbackRate} notes=${result.notes.join("|") || "n/a"}`,
     ),
@@ -106,7 +128,8 @@ export function buildEnvironmentAwareScenarios(
           recovered: 0,
           rolledBack: 0,
           unrecoverable: 0,
-          notes: ["local_smoke_only"],
+          synthetic: true,
+          notes: ["local_smoke_only", "synthetic_echo_test_not_real_soak"],
         }
       : {
           id: "local_only",
@@ -152,10 +175,12 @@ export function createSoakArtifact(
   scenarios: SoakScenario[],
 ): SoakArtifact {
   const remoteMachineIds = machineIds.filter((machineId) => machineId !== "local");
+  const isSynthetic = scenarios.every((s) => s.synthetic || !!s.blockedReason);
   return {
     generatedAt: Date.now(),
     machineIds,
     remoteMachineIds,
+    synthetic: isSynthetic,
     results: scenarios.map((scenario) => evaluateSoakScenario(scenario)),
   };
 }

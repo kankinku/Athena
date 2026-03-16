@@ -19,7 +19,7 @@
 athena research runs
 athena research next-actions
 athena research workflow <run-id>
-athena report <run-id>
+athena report <session-id|run-id>
 ```
 
 ## 언제 개입해야 하는가

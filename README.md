@@ -349,6 +349,7 @@ See [Beta Criteria](docs/beta-criteria.md) and [Bounded Autonomy](docs/bounded-a
 | [Operator Runbook](docs/operator-runbook.md) | Day-to-day operations reference |
 | [Module Autoresearch](docs/module-autoresearch.md) | Per-module improvement research spec |
 | [Supervised Production Tutorial](docs/modes/operator-supervised-production-tutorial.md) | End-to-end supervised run walkthrough |
+| [Feature Map](docs/feature-map.md) | Core / Conditional / Support / Experimental classification for every feature |
 
 ## Summary
 

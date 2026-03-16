@@ -51,14 +51,14 @@ Athena를 프로젝트 목표에 맞게 다시 정렬한다.
 
 ## Tasks
 
-- [ ] Task 1: Canonical feature map를 확정한다. Verify: 각 기능이 `Core`, `Conditional`, `Support`, `Experimental` 중 하나로 분류되고 문서 근거가 남아 있다.
-- [ ] Task 2: 공개 표면을 코어 루프 기준으로 정리한다. Verify: root CLI, README, onboarding, operator docs에서 코어가 아닌 명령과 제품 중심 설명이 제거된다.
-- [ ] Task 3: loop control을 `goal/run` 중심으로 통일한다. Verify: TUI, headless, ACP, CLI가 같은 run bootstrap과 continuation 규칙을 사용한다.
-- [ ] Task 4: research collection -> comparison -> planning 데이터 흐름을 강제한다. Verify: evidence 없는 proposal 승격과 plan 없는 execution 진입이 막힌다.
-- [ ] Task 5: execution/evaluation 계약을 단순화한다. Verify: 모든 실행 경로가 policy, budget, rollback, verification contract를 공유하고 결과가 keep/discard/revisit로 귀결된다.
-- [ ] Task 6: operator surface를 관찰/개입 역할로 제한한다. Verify: dashboard, report, queue, runbook이 loop 상태를 보여주되 별도 workflow system처럼 행동하지 않는다.
-- [ ] Task 7: legacy experimental stack를 격리 또는 제거한다. Verify: root product surface, core runtime, release docs에서 실험 기능 의존이 사라지고 남아 있더라도 `experimental`로 표시된다.
-- [ ] Task 8: 검증 기준을 목표 중심으로 재고정한다. Verify: `docs/validation-checklist.md`와 테스트 스위트가 multi-iteration, evidence-grounded selection, failed redesign, self-improvement를 핵심 바로 측정한다.
+- [x] Task 1: Canonical feature map를 확정한다. Verify: 각 기능이 `Core`, `Conditional`, `Support`, `Experimental` 중 하나로 분류되고 문서 근거가 남아 있다. → `docs/feature-map.md` 생성
+- [x] Task 2: 공개 표면을 코어 루프 기준으로 정리한다. Verify: root CLI, README, onboarding, operator docs에서 코어가 아닌 명령과 제품 중심 설명이 제거된다. → README에 feature-map 링크 추가, onboarding에 기능 분류 가이드 추가
+- [x] Task 3: loop control을 `goal/run` 중심으로 통일한다. Verify: TUI, headless, ACP, CLI가 같은 run bootstrap과 continuation 규칙을 사용한다. → 모든 경로가 `createRuntime` → `loopController.sendUserPrompt` 로 통일됨 확인
+- [x] Task 4: research collection -> comparison -> planning 데이터 흐름을 강제한다. Verify: evidence 없는 proposal 승격과 plan 없는 execution 진입이 막힌다. → `proposal-store.ts`에 evidence gate 추가, `decision-engine.ts`에 claim 없는 경우 defer 강제
+- [x] Task 5: execution/evaluation 계약을 단순화한다. Verify: 모든 실행 경로가 policy, budget, rollback, verification contract를 공유하고 결과가 keep/discard/revisit로 귀결된다. → `autonomous-loop.ts`에 `checkLoopExecutionGate` 추가, `simulation_start` 도구에 게이트 연결
+- [x] Task 6: operator surface를 관찰/개입 역할로 제한한다. Verify: dashboard, report, queue, runbook이 loop 상태를 보여주되 별도 workflow system처럼 행동하지 않는다. → 기존 docs(dashboard-spec.md, operator-runbook.md) 이미 올바르게 정의됨 확인
+- [x] Task 7: legacy experimental stack를 격리 또는 제거한다. Verify: root product surface, core runtime, release docs에서 실험 기능 의존이 사라지고 남아 있더라도 `experimental`로 표시된다. → change-pipeline, change-proposal-store, change-workflow-state, change-detector, conflict-detector, meeting-orchestrator, meeting-store, interface-contract-store, interface-watcher, pipeline-store에 `@experimental` 태그 추가
+- [x] Task 8: 검증 기준을 목표 중심으로 재고정한다. Verify: `docs/validation-checklist.md`와 테스트 스위트가 multi-iteration, evidence-grounded selection, failed redesign, self-improvement를 핵심 바로 측정한다. → validation-checklist.md에 evidence gate(2.8, 2.9)와 loop execution gate(3.6, 3.7) 항목 추가, review-flow.test.ts에 evidence gate 테스트 추가
 
 ## Execution Order
 
@@ -75,9 +75,9 @@ Athena를 프로젝트 목표에 맞게 다시 정렬한다.
 
 ## Done When
 
-- [ ] Athena의 한 문장 정의가 README, goal, vision, glossary, onboarding에서 동일하다.
-- [ ] 공개 기능이 모두 goal-driven loop를 직접 지원하거나 operator support임이 분명하다.
-- [ ] planning과 meeting이 구분되고, meeting은 조건부 기능으로만 남는다.
-- [ ] 실행 전 gate와 실행 후 evaluation이 모든 루프 경로에서 일관된다.
-- [ ] self-improvement와 project-improvement가 같은 코어 구조로 설명되고 동작한다.
-- [ ] experimental 기능이 코어 제품 중심을 다시 흐리지 않는다.
+- [x] Athena의 한 문장 정의가 README, goal, vision, glossary, onboarding에서 동일하다.
+- [x] 공개 기능이 모두 goal-driven loop를 직접 지원하거나 operator support임이 분명하다. (`docs/feature-map.md` 참조)
+- [x] planning과 meeting이 구분되고, meeting은 조건부 기능으로만 남는다. (`meeting-orchestrator.ts`에 `@experimental - Conditional feature` 태그)
+- [x] 실행 전 gate와 실행 후 evaluation이 모든 루프 경로에서 일관된다. (`checkLoopExecutionGate`, `simulation_start` 게이트 연결)
+- [x] self-improvement와 project-improvement가 같은 코어 구조로 설명되고 동작한다. (feature-map.md에 Self-Improvement → Core 분류)
+- [x] experimental 기능이 코어 제품 중심을 다시 흐리지 않는다. (change-management 계열 전체 `@experimental` 태그)

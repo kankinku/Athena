@@ -4,6 +4,9 @@
 
 각 항목은 pass/fail/blocked 중 하나로 기록한다.
 
+**검증 기준 원칙**: Athena의 핵심 루프는 `goal → collect evidence → compare → plan → execute → evaluate → keep/discard/revisit → repeat`이다.
+모든 시나리오는 이 루프의 각 단계가 올바르게 동작하는지, 그리고 단계 간 데이터 흐름이 강제되는지 확인한다.
+
 ---
 
 ## Scenario 1: Multi-Iteration Improvement Loop
@@ -23,7 +26,7 @@
 
 ## Scenario 2: Evidence-Grounded Change Selection
 
-**목표**: proposal 선택이 증거에 기반하는지 확인
+**목표**: proposal 선택이 증거에 기반하는지 확인 — evidence 없는 proposal이 실행 단계에 진입하지 못하는지 포함
 
 | # | 검증 항목 | 결과 | 비고 |
 |---|----------|------|------|
@@ -34,10 +37,12 @@
 | 2.5 | report의 `top_claims` 필드에 근거 claim이 표시된다 | | |
 | 2.6 | `evidence_coverage_gap`이 빈 곳에서는 gap이 표시된다 | | |
 | 2.7 | 근거가 약한 proposal은 높은 점수를 받지 않는다 | | |
+| 2.8 | claimIds가 없는 proposal을 approve하면 오류가 발생한다 (evidence gate) | | |
+| 2.9 | claimIds가 없는 proposal의 decision은 "defer"로 강제된다 | | |
 
 ## Scenario 3: Remote Or Bounded Runtime Execution
 
-**목표**: 로컬/원격 실행 경계를 넘어도 루프가 유지되는지 확인
+**목표**: 로컬/원격 실행 경계를 넘어도 루프가 유지되고, 실행 전 게이트가 강제되는지 확인
 
 | # | 검증 항목 | 결과 | 비고 |
 |---|----------|------|------|
@@ -46,6 +51,8 @@
 | 3.3 | 실행 중 상태가 CLI/dashboard에서 확인 가능하다 | | |
 | 3.4 | 중단 시 checkpoint/recovery 상태가 보인다 | | |
 | 3.5 | 실행 완료 후 evaluation 단계로 진행된다 | | |
+| 3.6 | 예산(maxIterations, maxWallClockMinutes) 초과 시 실행이 차단된다 (loop execution gate) | | |
+| 3.7 | workflow state가 'running'/'approved'가 아닐 때 simulation_start가 거부된다 | | |
 
 ## Scenario 4: High-Risk Action Gating
 
@@ -104,21 +111,23 @@
 | 시나리오 | 항목 수 | Pass | Fail | Blocked |
 |----------|---------|------|------|---------|
 | 1. Multi-Iteration Loop | 8 | | | |
-| 2. Evidence-Grounded Selection | 7 | | | |
-| 3. Remote/Bounded Execution | 5 | | | |
+| 2. Evidence-Grounded Selection | 9 | | | |
+| 3. Remote/Bounded Execution | 7 | | | |
 | 4. High-Risk Gating | 6 | | | |
 | 5. Failed Evaluation Redesign | 6 | | | |
 | 6. Self-Improvement | 5 | | | |
 | 7. Stop Conditions | 5 | | | |
-| **합계** | **42** | | | |
+| **합계** | **46** | | | |
 
 ## Minimum Validation Bar
 
 아래 조건을 충족해야 자율 연구 시스템으로서의 릴리스를 주장할 수 있다:
 
 - 7개 시나리오 모두 최소 1개 이상 pass 항목 존재
-- 전체 42개 항목 중 pass 비율 70% 이상
+- 전체 46개 항목 중 pass 비율 70% 이상
 - Scenario 1 (Multi-Iteration)과 Scenario 5 (Failed Redesign)은 전체 pass 필수
+- Scenario 2 항목 2.8과 2.9 (evidence gate enforcement): **pass 필수** — 증거 없는 proposal이 실행에 진입하는 것은 코어 루프 위반이다
+- Scenario 3 항목 3.6과 3.7 (loop execution gate): **pass 필수** — 예산/상태 게이트 우회는 허용되지 않는다
 
 ## 기록 규칙
 

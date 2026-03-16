@@ -5,6 +5,7 @@ import type { SimulationRunner } from "../research/simulation-runner.js";
 import type { TeamStore } from "../research/team-store.js";
 import type { IngestionService } from "../research/ingestion-service.js";
 import type { ResearchAutomationManager } from "../research/automation-manager.js";
+import { checkLoopExecutionGate } from "../research/autonomous-loop.js";
 import type {
   IngestionSourceRecord,
   ExperimentBudget,
@@ -136,7 +137,22 @@ export function createResearchOrchestrationTools(
       },
       execute: async (args) => {
         try {
-          const result = await simulationRunner.launch(args.charter as ExperimentCharter);
+          const charter = args.charter as ExperimentCharter;
+          // Loop execution gate: check the active run's policy, budget, and
+          // workflow state before crossing into the simulation (execution) stage.
+          const sessionId = getSessionId();
+          const activeRun = teamStore.listRecentTeamRuns(sessionId, 1)[0] ?? null;
+          if (activeRun) {
+            const gate = checkLoopExecutionGate(activeRun);
+            if (!gate.allowed) {
+              return JSON.stringify({
+                error: "loop_execution_gate_blocked",
+                blockers: gate.blockers,
+                warnings: gate.warnings,
+              });
+            }
+          }
+          const result = await simulationRunner.launch(charter);
           return JSON.stringify(result);
         } catch (err) {
           return JSON.stringify({ error: formatError(err) });

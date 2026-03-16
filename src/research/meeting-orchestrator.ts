@@ -1,6 +1,11 @@
 /**
  * meeting-orchestrator.ts
  *
+ * @experimental - Conditional feature
+ * 기본 루프 경로가 아니다. cross-module conflict, shared contract change,
+ * high-risk coordination이 필요할 때만 사용한다.
+ * 조건이 없으면 planning → simulation 경로를 직접 사용해야 한다.
+ *
  * 에이전트 소집, 회의 라운드 진행, 합의 판정을 오케스트레이션한다.
  * ImpactAnalysisResult → MeetingSession 생성 → 라운드 진행 → 합의 → ExecutionPlan.
  */

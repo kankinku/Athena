@@ -86,3 +86,16 @@ Read these:
 1. [Goal](./goal.md)
 2. [Vision](./vision.md)
 3. [Architecture Overview](./architecture-overview.md)
+
+## Feature Classification
+
+All features in Athena are classified as Core, Conditional, Support, or Experimental.
+
+See [Feature Map](./feature-map.md) for the complete list with document references.
+
+The short rule:
+
+- **Core** — directly constructs one of the six loop stages (collect, compare, plan, execute, evaluate, repeat)
+- **Conditional** — needed only on specific coordination paths, not the default loop path
+- **Support** — needed for operator observation, intervention, or persistence, but does not construct the loop
+- **Experimental** — not yet integrated with the core loop; not part of the supported product surface

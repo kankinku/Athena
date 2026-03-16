@@ -1,6 +1,11 @@
 /**
  * change-pipeline.ts
  *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * 코어 루프 경로(autonomous-loop, team-orchestrator, simulation-runner)와 혼용하지 않는다.
+ * 코어 루프와 통합될 때만 Experimental 상태에서 졸업할 수 있다.
+ *
  * 12개 plane을 end-to-end로 연결하는 중앙 오케스트레이터.
  *
  * 전체 흐름 (spec §15):

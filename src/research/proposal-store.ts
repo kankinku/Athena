@@ -38,6 +38,17 @@ export class ProposalStore {
     if (!proposal) {
       throw new Error(`Proposal brief not found: ${proposalId}`);
     }
+
+    // Evidence gate: approve/scope_trial requires at least one claim link.
+    // A proposal without evidence is not evidence-grounded selection — it is
+    // an assumption, and assumptions are not allowed to reach execution.
+    if ((action === "approve" || action === "scope_trial") && proposal.claimIds.length === 0) {
+      throw new Error(
+        `Cannot ${action} proposal ${proposalId}: no evidence links (claimIds is empty). ` +
+        "Run evidence collection and link at least one claim before promoting this proposal.",
+      );
+    }
+
     const nextStatus = nextProposalStatus(proposal.status, action);
     const updated: ProposalBrief = {
       ...proposal,

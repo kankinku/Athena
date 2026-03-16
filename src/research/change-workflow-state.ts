@@ -1,6 +1,10 @@
 /**
  * change-workflow-state.ts
  *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * 코어 루프의 workflow-state.ts(ResearchWorkflowState)와 별개이며 혼용하지 않는다.
+ *
  * 모듈 협의 기반 change proposal의 상태 전환 규칙.
  * 기존 workflow-state.ts (ResearchWorkflowState) 와 동일한 패턴으로,
  * ChangeWorkflowState에 대한 전환 검증을 제공한다.

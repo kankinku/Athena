@@ -1,3 +1,11 @@
+/**
+ * pipeline-store.ts
+ *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * change-pipeline.ts에서만 참조된다.
+ */
+
 import { getDb } from "../store/database.js";
 import type { PipelineContext } from "./change-pipeline.js";
 import { MeetingStore } from "./meeting-store.js";

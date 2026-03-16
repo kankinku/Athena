@@ -1,6 +1,10 @@
 /**
  * change-detector.ts
  *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * change-pipeline.ts를 통해서만 활성화된다.
+ *
  * 6종 변경 소스로부터 자동으로 ChangeProposal을 생성하는 통합 감지기:
  *   1. Git diff (commit/push 이후)
  *   2. 테스트 실패

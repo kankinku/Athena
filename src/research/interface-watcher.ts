@@ -1,6 +1,10 @@
 /**
  * interface-watcher.ts
  *
+ * @experimental - Conditional feature
+ * 코어 루프의 기본 경로가 아니다. contract 변경 감시를 코어 루프에
+ * 통합하는 시점에만 Conditional에서 Core로 승격할 수 있다.
+ *
  * 실행 단계에서 public interface 파일의 계약 범위 밖 변경을 감시한다.
  * 변경 감지 시:
  *  1. 해당 태스크 중단 신호 발생

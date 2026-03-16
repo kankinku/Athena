@@ -1,6 +1,10 @@
 /**
  * interface-contract-store.ts
  *
+ * @experimental - Conditional feature
+ * 코어 루프의 기본 경로가 아니다. contract 변경 감지가 필요한
+ * 환경에서만 interface-watcher를 통해 활성화된다.
+ *
  * 모듈 간 공용 인터페이스 계약의 DB 영속화 및 CRUD.
  * InterfaceContract를 1급 객체로 관리하여 영향 분석과 breaking change 감지를 강화한다.
  */

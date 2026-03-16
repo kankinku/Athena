@@ -1,6 +1,10 @@
 /**
  * meeting-store.ts
  *
+ * @experimental - Conditional feature
+ * 코어 루프의 기본 경로가 아니다. cross-module conflict, high-risk coordination이
+ * 필요할 때만 meeting-orchestrator를 통해 활성화된다.
+ *
  * 에이전트 회의 세션, 발언 기록, 승인 조건, 실행 계획의 CRUD.
  * 기존 ProposalStore, DecisionStore와 동일한 패턴:
  *   getDb() + prepared statements + JSON 직렬화.

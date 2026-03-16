@@ -1,6 +1,10 @@
 /**
  * change-proposal-store.ts
  *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * 코어 루프의 ProposalStore(proposal-store.ts)와 혼용하지 않는다.
+ *
  * 연구(research) proposal과 코드 변경(change) proposal을 명확히 분리하는 저장소.
  *
  * 분리 원칙:

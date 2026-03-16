@@ -82,12 +82,21 @@ export function buildProposalDecision(
 ): DecisionRecord {
   const scorecard = brief.scorecard ?? buildProposalScorecard(brief);
   const decisionType = classifyProposalDecision(scorecard.decisionScore, scorecard.risk);
-  const reasonTags = classifyProposalReasonTags(scorecard, decisionType);
+  // If no evidence links, force a "defer" decision and tag it as low_confidence_evidence.
+  // A claim-free proposal must not reach "adopt" or "trial" — it has no evidence floor.
+  const effectiveDecisionType =
+    brief.claimIds.length === 0 && (decisionType === "adopt" || decisionType === "trial")
+      ? "defer"
+      : decisionType;
+  const reasonTags = classifyProposalReasonTags(scorecard, effectiveDecisionType);
+  if (brief.claimIds.length === 0 && !reasonTags.includes("low_confidence_evidence")) {
+    reasonTags.push("low_confidence_evidence");
+  }
   return {
     decisionId: nanoid(),
     proposalId: brief.proposalId,
-    decisionType,
-    decisionSummary: summarizeProposalDecision(brief, decisionType, scorecard),
+    decisionType: effectiveDecisionType,
+    decisionSummary: summarizeProposalDecision(brief, effectiveDecisionType, scorecard),
     confidence: clamp01(scorecard.decisionScore),
     reasonTags,
     createdAt: Date.now(),

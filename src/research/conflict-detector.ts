@@ -1,6 +1,10 @@
 /**
  * conflict-detector.ts
  *
+ * @experimental
+ * 이 모듈은 코어 루프와 직접 통합되지 않은 legacy change-management 서브시스템이다.
+ * meeting-orchestrator와 change-pipeline에서만 참조된다.
+ *
  * 5종 충돌을 자동으로 감지한다:
  *   1. 인터페이스 충돌 — 동일 InterfaceContract를 서로 다른 방식으로 변경
  *   2. 데이터 구조 충돌 — DB 스키마 변경이 다른 모듈의 쿼리에 영향

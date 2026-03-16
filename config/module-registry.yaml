@@ -103,8 +103,6 @@ modules:
       - src/cli/**
     public_interfaces:
       - athena research <subcommand>
-      - athena proposal <subcommand>
-      - athena meeting <subcommand>
       - athena impact analyze
       - athena report
       - athena security
@@ -137,7 +135,6 @@ modules:
       - src/app.tsx
     public_interfaces:
       - ResearchStatusPanel              # src/ui/panels/research-status.tsx
-      - MeetingStatusPanel               # src/ui/panels/meeting-status.tsx (신규)
       - ConversationPanel                # src/ui/panels/conversation.tsx
       - MetricsDashboard                 # src/ui/panels/metrics-dashboard.tsx
     depends_on:

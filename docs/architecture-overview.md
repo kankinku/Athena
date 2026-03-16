@@ -21,10 +21,18 @@
 주요 파일:
 - `src/research/ingestion-service.ts`
 - `src/research/claim-graph.ts`
-- `src/research/decision-engine.ts`
 - `src/research/source-adapters/*`
 
-### 3. Execution and Experimentation
+### 3. Planning and Decision
+
+수집된 자료를 후보로 줄이고, 다음 bounded improvement를 선택하는 계층이다.
+
+주요 파일:
+- `src/research/decision-engine.ts`
+- `src/research/team-orchestrator.ts`
+- `src/research/meeting-orchestrator.ts`
+
+### 4. Execution and Experimentation
 
 실제 개선을 수행하거나 시뮬레이션하고, 로컬 및 원격 머신에서 실행을 관리한다.
 
@@ -34,7 +42,7 @@
 - `src/research/simulation-runner.ts`
 - `src/tools/research-orchestration.ts`
 
-### 4. Memory and Reporting
+### 5. Memory and Reporting
 
 실험 이력, 그래프 메모리, 보고서, 운영자 관찰면을 담당한다.
 
@@ -44,7 +52,7 @@
 - `src/ui/panels/research-status.tsx`
 - `src/cli/research.ts`
 
-### 5. Safety and Governance
+### 6. Safety and Governance
 
 정책, 위험 경계, 승인, 감사, 롤백, 검증을 담당한다.
 
@@ -59,11 +67,12 @@
 ```text
 goal
   -> collect evidence
-  -> select the next improvement
+  -> shortlist and compare candidate directions
+  -> plan the next bounded improvement
   -> execute or simulate
   -> evaluate result
+  -> keep, discard, or revisit
   -> update memory and decision state
-  -> choose next action
   -> repeat
 ```
 
@@ -71,7 +80,7 @@ goal
 
 Athena의 본질은 `회의 시스템`이 아니라 `반복형 연구 실행 시스템`이다.
 
-- 회의는 다중 모듈 조정이 필요할 때 쓰는 지원 메커니즘이다.
+- 회의는 다중 모듈 조정이나 충돌 해소가 필요할 때 쓰는 조건부 planning 메커니즘이다.
 - 오케스트레이터는 루프 방향 제어기다.
 - 메모리와 보고서는 루프의 기억 장치다.
 - 원격 실행과 보안 정책은 루프의 실행 기반이다.

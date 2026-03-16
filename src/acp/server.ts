@@ -30,7 +30,7 @@ import type {
   SessionUpdate,
 } from "./types.js";
 import type { AthenaRuntime } from "../init.js";
-import type { ToolCallEvent } from "../providers/types.js";
+import type { AgentEvent, ToolCallEvent } from "../providers/types.js";
 import type { Message } from "../ui/types.js";
 import { VERSION } from "../version.js";
 import { COMMANDS, handleSlashCommand, type CommandContext } from "../ui/commands.js";
@@ -98,6 +98,7 @@ export class AcpServer {
 
   private get orchestrator() { return this.runtime.orchestrator; }
   private get experimentTracker() { return this.runtime.experimentTracker; }
+  private get loopController() { return this.runtime.loopController; }
 
   start(): void {
     this.transport.start();
@@ -161,6 +162,24 @@ export class AcpServer {
         });
 
         await this.runtime.simulationRunner.enforceBudgets().catch(() => {});
+
+        const sessionId = this.getActiveSessionId();
+        if (sessionId) {
+          const { activeRun } = await this.loopController.tickAutomation(sessionId).catch(() => ({
+            activeRun: null,
+            updates: [],
+          }));
+          const continuation = this.prompting
+            ? null
+            : this.loopController.buildAutonomousContinuation(activeRun, {
+                isStreaming: this.prompting,
+                isSleeping: this.runtime.sleepManager.isSleeping,
+                monitorActive: this.runtime.monitorManager.isActive,
+              });
+          if (continuation) {
+            await this.injectPrompt(sessionId, continuation.prompt, continuation.label);
+          }
+        }
       } catch {
         // Non-fatal — will retry on next tick
       } finally {
@@ -185,55 +204,18 @@ export class AcpServer {
    * Inject a synthetic prompt into the session (monitor tick, sleep wake, etc.)
    * and stream the model's response as ACP session updates.
    */
-  private async injectPrompt(sessionId: string, text: string): Promise<void> {
+  private async injectPrompt(sessionId: string, text: string, label?: string): Promise<void> {
     if (this.prompting) return;
     this.prompting = true;
 
     try {
-      for await (const event of this.orchestrator.send(text)) {
-        this.experimentTracker?.onEvent(event);
-
-        switch (event.type) {
-          case "text":
-            if (event.delta) {
-              this.sendUpdate(sessionId, {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: event.delta },
-              });
-            }
-            break;
-
-          case "tool_call":
-            this.sendUpdate(sessionId, {
-              sessionUpdate: "tool_call",
-              toolCallId: event.id,
-              title: toolTitle(event),
-              kind: toolKind(event.name),
-              status: "in_progress",
-            });
-            break;
-
-          case "tool_result": {
-            const content: ContentBlock[] = event.result
-              ? [{ type: "text", text: event.result }]
-              : [];
-            this.sendUpdate(sessionId, {
-              sessionUpdate: "tool_call_update",
-              toolCallId: event.callId,
-              status: event.isError ? "failed" : "completed",
-              content,
-            });
-            break;
-          }
-
-          case "error":
-            this.sendUpdate(sessionId, {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: `Error: ${event.error.message}` },
-            });
-            break;
-        }
+      if (label) {
+        this.sendUpdate(sessionId, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: label },
+        });
       }
+      await this.streamEvents(sessionId, this.loopController.sendSyntheticPrompt(text));
     } catch (err) {
       process.stderr.write(`[athena-acp] inject prompt error: ${err instanceof Error ? err.message : String(err)}\n`);
     } finally {
@@ -277,7 +259,7 @@ export class AcpServer {
       },
       agentInfo: {
         name: "athena",
-        title: "Athena — Autonomous ML Research Agent",
+        title: "Athena - Autonomous Research Loop Runtime",
         version: VERSION,
       },
       authMethods: [],
@@ -338,60 +320,11 @@ export class AcpServer {
 
     this.prompting = true;
     try {
-      let stopReason: SessionPromptResult["stopReason"] = "end_turn";
-
-      for await (const event of this.orchestrator.send(text)) {
-        // Check for cancellation
-        if (this.activePromptSession !== params.sessionId) {
-          stopReason = "cancelled";
-          break;
-        }
-
-        // Feed to experiment tracker
-        this.experimentTracker?.onEvent(event);
-
-        switch (event.type) {
-          case "text":
-            if (event.delta) {
-              this.sendUpdate(params.sessionId, {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: event.delta },
-              });
-            }
-            break;
-
-          case "tool_call":
-            this.sendUpdate(params.sessionId, {
-              sessionUpdate: "tool_call",
-              toolCallId: event.id,
-              title: toolTitle(event),
-              kind: toolKind(event.name),
-              status: "in_progress",
-            });
-            break;
-
-          case "tool_result": {
-            const content: ContentBlock[] = event.result
-              ? [{ type: "text", text: event.result }]
-              : [];
-            this.sendUpdate(params.sessionId, {
-              sessionUpdate: "tool_call_update",
-              toolCallId: event.callId,
-              status: event.isError ? "failed" : "completed",
-              content,
-            });
-            break;
-          }
-
-          case "error":
-            this.sendUpdate(params.sessionId, {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: `Error: ${event.error.message}` },
-            });
-            break;
-        }
-      }
-
+      const stopReason = await this.streamEvents(
+        params.sessionId,
+        this.loopController.sendUserPrompt(text),
+        true,
+      );
       return { stopReason };
     } catch {
       return { stopReason: "end_turn" };
@@ -436,6 +369,66 @@ export class AcpServer {
       sessionId,
       update,
     } as unknown as Record<string, unknown>);
+  }
+
+  private async streamEvents(
+    sessionId: string,
+    eventStream: AsyncIterable<AgentEvent>,
+    allowCancel = false,
+  ): Promise<SessionPromptResult["stopReason"]> {
+    let stopReason: SessionPromptResult["stopReason"] = "end_turn";
+
+    for await (const event of eventStream) {
+      if (allowCancel && this.activePromptSession !== sessionId) {
+        stopReason = "cancelled";
+        break;
+      }
+
+      this.experimentTracker?.onEvent(event);
+
+      switch (event.type) {
+        case "text":
+          if (event.delta) {
+            this.sendUpdate(sessionId, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: event.delta },
+            });
+          }
+          break;
+
+        case "tool_call":
+          this.sendUpdate(sessionId, {
+            sessionUpdate: "tool_call",
+            toolCallId: event.id,
+            title: toolTitle(event),
+            kind: toolKind(event.name),
+            status: "in_progress",
+          });
+          break;
+
+        case "tool_result": {
+          const content: ContentBlock[] = event.result
+            ? [{ type: "text", text: event.result }]
+            : [];
+          this.sendUpdate(sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: event.callId,
+            status: event.isError ? "failed" : "completed",
+            content,
+          });
+          break;
+        }
+
+        case "error":
+          this.sendUpdate(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `Error: ${event.error.message}` },
+          });
+          break;
+      }
+    }
+
+    return stopReason;
   }
 
   private getConfigOptions(): SessionConfigSelectOption[] {

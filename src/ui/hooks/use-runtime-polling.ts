@@ -22,6 +22,7 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
     connectionPool,
     executor,
     experimentTracker,
+    loopController,
     metricCollector,
     metricStore,
     notifier,
@@ -78,7 +79,12 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
 
       const sessionId = orchestrator.currentSession?.id;
       if (sessionId) {
-        const run = teamStore.listRecentTeamRuns(sessionId, 1)[0] ?? null;
+        const { activeRun } = await loopController.tickAutomation(sessionId).catch(() => ({
+          activeRun: null,
+          updates: [],
+        }));
+        const recentRuns = teamStore.listRecentTeamRuns(sessionId, 10);
+        const run = activeRun ?? recentRuns[0] ?? null;
         setActiveResearchRun(run);
         setLatestIngestionSource(teamStore.listIngestionSources(sessionId)[0] ?? null);
         setOpenIncidentCount(teamStore.listOpenIncidents(sessionId).length);
@@ -115,6 +121,7 @@ export function useRuntimePolling(runtime: AthenaRuntime): RuntimePollingState {
     connectionPool,
     executor,
     experimentTracker,
+    loopController,
     metricCollector,
     metricStore,
     notifier,

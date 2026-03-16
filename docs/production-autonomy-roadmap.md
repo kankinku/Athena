@@ -11,7 +11,7 @@ Athena is already an autonomous research system.
 This roadmap does not create a new product identity. It hardens the same core loop:
 
 ```text
-goal -> plan -> improve -> evaluate -> redesign -> repeat
+goal -> collect -> compare -> plan -> improve -> evaluate -> keep, discard, or revisit -> repeat
 ```
 
 ## Production Autonomy Means

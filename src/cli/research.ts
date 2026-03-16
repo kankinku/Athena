@@ -7,7 +7,7 @@ import { Option } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 
 const view = Args.text({ name: "view" }).pipe(
-  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|queue|incidents|journal|operate|evals|checklist|soak|next-actions|git-notify|iterations"),
+  Args.withDescription("runs|workflow|automation|proposals|simulations|decisions|lineage|ingestion|ingest|graph|revisit|scorecard|budget|claims|improvements|review|queue|incidents|journal|operate|evals|checklist|soak|next-actions|iterations"),
 );
 
 const target = Args.text({ name: "target" }).pipe(
@@ -624,54 +624,6 @@ export const research = Command.make(
               process.exit(1);
             }
             console.log(runtime.graphMemory.formatSubgraph([target], 1, 12));
-            return;
-          }
-          case "git-notify": {
-            const event = target; // post-commit | pre-push
-            if (!event || !["post-commit", "pre-push"].includes(event)) {
-              console.error("Usage: athena research git-notify <post-commit|pre-push>");
-              process.exit(1);
-            }
-            const { GitIntegration } = await import("../research/git-integration.js");
-            const { ChangeDetector } = await import("../research/change-detector.js");
-            const { AuditEventStore } = await import("../research/audit-event-store.js");
-
-            const gitIntegration = new GitIntegration();
-            const auditEventStore = new AuditEventStore();
-            const changeDetector = new ChangeDetector({ auditStore: auditEventStore });
-
-            const result = await gitIntegration.detectPostCommitChanges();
-            if (!result) {
-              console.log("No changes detected.");
-              return;
-            }
-
-            // 감사 이벤트 저장
-            auditEventStore.save(result.auditEvent);
-
-            // Git diff → DetectedChange → ChangeProposal
-            const change = changeDetector.fromGitDiff(result.changedFiles.join("\n"));
-            if (!change) {
-              console.log("No actionable changes.");
-              return;
-            }
-
-            const proposal = changeDetector.createProposalFromChange(resolvedSessionId, change);
-            if (proposal) {
-              printLines([
-                `event  ${event}`,
-                `commit  ${result.commitInfo.hash.slice(0, 8)} ${result.commitInfo.message}`,
-                `files  ${result.changedFiles.length}`,
-                `proposal  ${proposal.proposalId} ${proposal.title}`,
-              ]);
-            } else {
-              printLines([
-                `event  ${event}`,
-                `commit  ${result.commitInfo.hash.slice(0, 8)} ${result.commitInfo.message}`,
-                `files  ${result.changedFiles.length}`,
-                `proposal  (duplicate — skipped)`,
-              ]);
-            }
             return;
           }
           default:

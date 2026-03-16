@@ -40,6 +40,8 @@ Athena는 이미 다음 요소를 갖고 있다.
 - proposal은 "회의용 change request"가 아니라 "다음 개선 후보"
 - operator surface는 제품 본체가 아니라 관찰과 개입 수단
 - autonomy roadmap은 별도 시스템이 아니라 같은 루프의 확장 경로
+- change-management와 meeting 계층은 연구 루프에 직접 통합되기 전까지 제품 중심을 정의하지 않아야 한다
+- 지원되지 않은 실험 표면은 루트 제품 표면보다 앞에 오면 안 된다
 
 ## 핵심 진단
 

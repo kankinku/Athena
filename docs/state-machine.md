@@ -10,7 +10,7 @@ This document explains Athena's state model at two levels:
 Athena is built around a repeating improvement loop:
 
 ```text
-goal -> plan -> improve -> evaluate -> redesign -> repeat
+goal -> collect -> compare -> plan -> improve -> evaluate -> keep, discard, or revisit -> repeat
 ```
 
 This is the product-level mental model.
@@ -38,10 +38,10 @@ The valid states are:
 | Product Loop Step | Runtime State |
 |---|---|
 | goal captured and bounded | `draft` |
-| next move is prepared | `ready` |
+| collection, comparison, and next-move planning are being prepared | `ready` |
 | bounded approval or release gate is satisfied | `approved` |
 | execution or simulation is active | `running` |
-| result comparison is active | `evaluating` |
+| result comparison and keep/discard/revisit judgment are active | `evaluating` |
 | the current loop pass has been summarized | `reported` |
 | the result should be revisited later | `revisit_due` |
 | the run is closed and retained for history | `archived` |
@@ -69,7 +69,7 @@ Valid transitions today are:
 The product loop should stay simple:
 
 ```text
-goal -> plan -> improve -> evaluate -> redesign -> repeat
+goal -> collect -> compare -> plan -> improve -> evaluate -> keep, discard, or revisit -> repeat
 ```
 
 The runtime state machine must stay exact so that:

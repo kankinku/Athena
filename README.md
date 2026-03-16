@@ -7,50 +7,46 @@
 
 Athena is a terminal-native autonomous research system.
 
-Its purpose is to keep running a goal-directed improvement loop:
+## Primary Goal
+
+Athena's primary goal is simple:
+
+> move a target system toward a user-defined goal by repeatedly collecting the right material, choosing the right next improvement, and applying it safely
+
+Athena reaches that goal through these core activities:
+
+- research collects current methods, reference repos, prior evidence, and constraints
+- comparison reduces that material into the strongest candidate directions
+- planning or agent interaction turns the best candidate into one bounded next move
+- execution applies or simulates the chosen move
+- evaluation decides whether to keep or discard it
+- memory and reporting preserve state across long runs
+- policy and budgets keep the loop bounded
+
+Its core loop is:
 
 ```text
-goal → collect evidence → propose improvement → execute → evaluate → redesign → repeat
+goal → collect evidence → shortlist and compare → plan the next bounded move → execute → evaluate → keep, discard, or revisit → repeat
 ```
 
 ## One-Line Definition
 
 Athena is a terminal-native autonomous research system that uses Claude or OpenAI models to plan, execute, evaluate, and redesign improvements across local and remote machines.
 
-## What Athena Actually Is
+## Core Rules
 
-Athena is not just a chat interface, not just a coding agent, and not just a paper-research tool.
-
-It is a loop runner.
-
-You give Athena a target. Athena gathers evidence, proposes the next improvement, executes or simulates the change, evaluates the result, updates its understanding, and decides what to try next. It keeps doing that until it converges, hits a policy boundary, or is stopped.
-
-**Research exists to improve the loop.** Athena reads documents, URLs, code, metrics, reports, and prior runs because they can justify a better next move. The point is not "do research." The point is "use research to improve the target system."
-
-**The orchestrator exists to keep the loop pointed at the goal.** It decides what kind of work should happen next, what evidence matters, when to pause, when to retry, and when to escalate.
-
-`autoresearch` inside Athena means structured self-improvement:
-
-- generate a candidate change
-- execute or simulate it
-- compare the result against prior evidence
-- keep improvements, discard regressions
-- cascade iteration when a regression is detected
-- repeat inside a bounded policy and budget
-
-## What Athena Is Not
-
-- a plain wrapper around Claude or OpenAI
-- a one-shot agent that stops after a single answer
-- a generic coding tool with no research loop
-- a document-only literature review product
-- a fully unrestricted autonomous system
+- the goal is more important than the current chat turn
+- the next bounded improvement is more important than a broad rewrite
+- current evidence is more important than stale assumptions
+- evidence is more important than intuition
+- improvements are kept, regressions are discarded
+- the loop stops only on success, policy block, or missing human-only input
 
 ## Current Product Position
 
-> `a strong-beta autonomous research system whose most validated deployment mode is operator-supervised autonomy`
+Athena is a strong-beta autonomous research loop runtime.
 
-Autonomy is the product center. Operator supervision is the currently strongest verified safety envelope.
+The most validated operating mode today is `supervised-auto`, but the product center is still autonomous improvement.
 
 **What the codebase includes today:**
 
@@ -77,10 +73,11 @@ Autonomy is the product center. Operator supervision is the currently strongest 
 ```text
 goal
   → collect evidence          (ingestion-service, source-adapters)
-  → select next improvement   (decision-engine, proposal scorecard)
+  → shortlist and compare     (claim-graph, decision-engine, proposal scorecard)
+  → plan the next move        (team-orchestrator, structured planning, conditional agent interaction)
   → execute or simulate       (simulation-runner, remote executor)
   → evaluate                  (result decision, drift calibration)
-  → redesign / cascade        (cascadeIteration, reconsideration triggers)
+  → keep / discard / revisit  (result decision, cascadeIteration, reconsideration triggers)
   → repeat
 ```
 
@@ -231,12 +228,12 @@ athena search "query"         Search session histories
 athena export [session-id]    Export data to CSV or JSON
 athena kill <machine:pid>     Kill a running remote task
 athena research ...
-athena proposal ...
-athena meeting ...
-athena dashboard ...
-athena history ...
 athena report [session-id|run-id]
 ```
+
+The supported root product surface is the goal-driven research runtime.
+
+Older change-management commands remain in the codebase as internal or experimental subsystems and are not part of the supported root CLI.
 
 **Research operator views:**
 
@@ -317,7 +314,7 @@ npm run test:release
 npm run build
 ```
 
-Current test status: **296 tests, 288 passing** (7 pre-existing failures unrelated to core loop).
+Use `npm run test:research`, `npm run test:phase5`, and `npm run build` as the core verification path for the loop runtime.
 
 ### Internal Beta (v0.3) criteria
 
@@ -336,6 +333,7 @@ See [Beta Criteria](docs/beta-criteria.md) and [Bounded Autonomy](docs/bounded-a
 
 | Document | Purpose |
 |----------|---------|
+| [Goal](docs/goal.md) | Project-wide goal and decision rule |
 | [Glossary](docs/glossary.md) | Term definitions |
 | [Onboarding](docs/onboarding.md) | First-run guide |
 | [Vision](docs/vision.md) | Product direction |

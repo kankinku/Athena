@@ -332,10 +332,8 @@ export class GitIntegration {
       `# Event: ${event}`,
       `# Installed: ${new Date().toISOString()}`,
       "",
-      "# Notify Athena of git changes",
-      "if command -v athena >/dev/null 2>&1; then",
-      `  athena research git-notify --event ${event} --ignore '${ignoreJson}' &`,
-      "fi",
+      "# Automatic git-diff intake is disabled until it is integrated into the main loop.",
+      `# ignore_paths=${ignoreJson}`,
       "",
     ].join("\n");
   }

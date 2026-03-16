@@ -20,7 +20,7 @@ This is not a separate product inside Athena.
 It is one way Athena organizes the same core loop:
 
 ```text
-collect -> plan -> execute/evaluate -> redesign
+collect -> compare -> plan -> execute/evaluate -> keep, discard, or revisit
 ```
 
 ## Product Interpretation

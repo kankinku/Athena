@@ -21,7 +21,6 @@ import { TeamOrchestrator } from "./team-orchestrator.js";
 import { ResearchSessionBootstrapper } from "./session-bootstrap.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ResearchLoopController } from "./runtime-loop-controller.js";
-import { buildResearchReportInput } from "./reporting.js";
 import { closeDb } from "../store/database.js";
 
 class FakeProvider implements ModelProvider {
@@ -77,8 +76,8 @@ class FakeProvider implements ModelProvider {
   }
 }
 
-test("first prompt bootstraps a research run and reportable state", async () => {
-  const home = mkdtempSync(join(tmpdir(), "athena-phase2-bootstrap-"));
+test("loop controller centralizes explicit run bootstrap without orchestrator hooks", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-loop-controller-"));
   process.env.ATHENA_HOME = home;
 
   try {
@@ -93,40 +92,61 @@ test("first prompt bootstraps a research run and reportable state", async () => 
       systemPrompt: "test system prompt",
       sessionStore,
     });
-    const loopController = new ResearchLoopController(orchestrator, bootstrapper, teamStore);
-    const provider = new FakeProvider(sessionStore);
+    orchestrator.registerProvider(new FakeProvider(sessionStore));
 
-    orchestrator.registerProvider(provider);
+    const controller = new ResearchLoopController(orchestrator, bootstrapper, teamStore);
 
-    for await (const _event of loopController.sendUserPrompt("Phase 2 bootstrap prompt")) {
-      // drain
-    }
-    for await (const _event of loopController.sendUserPrompt("Follow-up prompt should reuse the same run")) {
+    for await (const _event of controller.sendUserPrompt("Create a bounded improvement run")) {
       // drain
     }
 
     const session = sessionStore.listSessions(1)[0];
     assert.ok(session);
+    const run = teamStore.listRecentTeamRuns(session.id, 1)[0];
+    assert.ok(run);
+    assert.equal(run.goal, "Create a bounded improvement run");
+    assert.equal(run.automationPolicy.mode, "supervised-auto");
+  } finally {
+    closeDb();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.ATHENA_HOME;
+  }
+});
 
-    const runs = teamStore.listRecentTeamRuns(session.id, 10);
-    assert.equal(runs.length, 1);
-    assert.equal(runs[0].workflowState, "running");
-    assert.equal(runs[0].status, "active");
-    assert.equal((runs[0].latestOutput as { source?: string } | undefined)?.source, "initial_prompt");
-    assert.equal(runs[0].automationPolicy.mode, "supervised-auto");
-    assert.equal(runs[0].automationPolicy.requireProposalApproval, false);
-    assert.equal(runs[0].automationPolicy.requireExperimentApproval, false);
-    assert.equal(runs[0].automationPolicy.requireRevisitApproval, false);
+test("loop controller computes autonomous continuation from active run state", async () => {
+  const home = mkdtempSync(join(tmpdir(), "athena-loop-continuation-"));
+  process.env.ATHENA_HOME = home;
 
-    const sources = teamStore.listIngestionSources(session.id);
-    assert.equal(sources.length, 1);
-    assert.equal(sources[0].sourceType, "manual");
-    assert.match(sources[0].notes ?? "", /Phase 2 bootstrap prompt/);
+  try {
+    const sessionStore = new SessionStore();
+    const teamStore = new TeamStore();
+    const memoryStore = new MemoryStore("pending");
+    const graphMemory = new GraphMemory(memoryStore);
+    const teamOrchestrator = new TeamOrchestrator(teamStore, graphMemory, () => "pending");
+    const bootstrapper = new ResearchSessionBootstrapper(teamStore, teamOrchestrator);
+    const orchestrator = new Orchestrator({
+      defaultProvider: "openai",
+      systemPrompt: "test system prompt",
+      sessionStore,
+    });
+    orchestrator.registerProvider(new FakeProvider(sessionStore));
+    const controller = new ResearchLoopController(orchestrator, bootstrapper, teamStore);
 
-    const reportInput = buildResearchReportInput(session.id, teamStore, sessionStore, { transcriptLimit: 20 });
-    assert.match(reportInput, /## Team Runs/);
-    assert.match(reportInput, /## Ingestion Sources/);
-    assert.match(reportInput, /Phase 2 bootstrap prompt/);
+    for await (const _event of controller.sendUserPrompt("Keep improving the loop until blocked")) {
+      // drain
+    }
+
+    const session = sessionStore.listSessions(1)[0];
+    assert.ok(session);
+    const continuation = controller.getAutonomousContinuationForSession(session.id, {
+      isStreaming: false,
+      isSleeping: false,
+      monitorActive: false,
+    });
+
+    assert.ok(continuation);
+    assert.match(continuation.prompt, /Autonomous continuation/);
+    assert.match(continuation.label, /Autonomous loop continuing/);
   } finally {
     closeDb();
     rmSync(home, { recursive: true, force: true });

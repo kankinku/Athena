@@ -11,7 +11,7 @@ Athena is an autonomous research system.
 Its job is to move a target system toward a goal by repeating a bounded improvement loop:
 
 ```text
-goal -> plan -> improve -> evaluate -> redesign -> repeat
+goal -> collect -> compare -> plan -> improve -> evaluate -> keep, discard, or revisit -> repeat
 ```
 
 ### Autonomous Research System
@@ -20,10 +20,11 @@ A system that can repeatedly:
 
 - understand a goal
 - gather evidence
-- choose the next improvement
+- compare candidate directions
+- choose the next bounded improvement
 - execute or simulate the change
 - evaluate the result
-- redesign the next move
+- keep, discard, revisit, or redesign the next move
 
 without collapsing into a single one-shot answer.
 
@@ -48,9 +49,9 @@ Examples:
 
 ### Research
 
-Research is evidence gathering in service of the next improvement.
+Research is evidence gathering and reduction in service of the next improvement.
 
-Research is not the product identity. It exists to justify better loop decisions.
+Research is one of the core stages in the loop. It exists to justify better loop decisions.
 
 ### Evidence
 

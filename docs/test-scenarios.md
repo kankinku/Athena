@@ -5,7 +5,7 @@ This document defines the highest-value scenarios for validating Athena as an au
 The purpose is not to test isolated commands. The purpose is to verify that Athena can run a bounded improvement loop:
 
 ```text
-goal -> plan -> improve -> evaluate -> redesign -> repeat
+goal -> collect -> compare -> plan -> improve -> evaluate -> redesign -> repeat
 ```
 
 ## How To Use These Scenarios

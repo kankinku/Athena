@@ -584,59 +584,6 @@ export class TeamStore {
   getSimulationRun(id: string): SimulationRunRecord | null {
     return this.simulationStore.getSimulationRun(id);
   }
-
-  // ── Change Management Delegation ────────────────────────────────────────────
-
-  private _changeProposalStore?: import("./change-proposal-store.js").ChangeProposalStore;
-  private _meetingStore?: import("./meeting-store.js").MeetingStore;
-
-  private get changeProposalStore() {
-    if (!this._changeProposalStore) {
-      // Lazy import to avoid circular dependency
-      const { ChangeProposalStore } = require("./change-proposal-store.js") as typeof import("./change-proposal-store.js");
-      this._changeProposalStore = new ChangeProposalStore();
-    }
-    return this._changeProposalStore;
-  }
-
-  private get meetingStore() {
-    if (!this._meetingStore) {
-      const { MeetingStore } = require("./meeting-store.js") as typeof import("./meeting-store.js");
-      this._meetingStore = new MeetingStore();
-    }
-    return this._meetingStore;
-  }
-
-  createChangeProposal(
-    sessionId: string,
-    input: { title: string; summary?: string; requestedChange?: string; changedPaths?: string[]; createdBy?: string },
-  ) {
-    return this.changeProposalStore.create(sessionId, input);
-  }
-
-  getChangeProposal(proposalId: string) {
-    return this.changeProposalStore.get(proposalId);
-  }
-
-  listChangeProposals(options?: { sessionId?: string; workflowState?: import("./contracts.js").ChangeWorkflowState; moduleId?: string }) {
-    return this.changeProposalStore.list(options);
-  }
-
-  listActiveChangeProposals(sessionId?: string) {
-    return this.changeProposalStore.listActive(sessionId);
-  }
-
-  getMeetingSession(meetingId: string) {
-    return this.meetingStore.getMeetingSession(meetingId);
-  }
-
-  getMeetingByProposal(proposalId: string) {
-    return this.meetingStore.getMeetingByProposal(proposalId);
-  }
-
-  listActiveMeetings() {
-    return this.meetingStore.listActiveMeetings();
-  }
 }
 
 function average(values: Array<number | undefined>): number {

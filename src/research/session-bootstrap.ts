@@ -23,10 +23,19 @@ export class ResearchSessionBootstrapper {
     }
 
     const run = this.teamOrchestrator.startRunForSession(context.sessionId, context.prompt);
+    const automatedRun = this.teamOrchestrator.configureAutomation(run.id, {
+      automationPolicy: {
+        mode: "supervised-auto",
+        requireProposalApproval: false,
+        requireExperimentApproval: false,
+        requireRevisitApproval: false,
+        maxAutoExperiments: 3,
+      },
+    }) ?? run;
     const promptPreview = truncate(context.prompt, 120, true);
 
     const latestOutput = {
-      ...(run.latestOutput ?? {}),
+      ...(automatedRun.latestOutput ?? {}),
       source: "initial_prompt",
       provider: context.provider,
       model: context.model ?? "default",
@@ -34,9 +43,9 @@ export class ResearchSessionBootstrapper {
       bootstrappedAt: Date.now(),
     };
 
-    const updated = this.teamStore.updateTeamRun(run.id, {
+    const updated = this.teamStore.updateTeamRun(automatedRun.id, {
       latestOutput,
-    }) ?? run;
+    }) ?? automatedRun;
 
     this.teamOrchestrator.checkpointRun(updated.id, "initial prompt accepted", {
       provider: context.provider,

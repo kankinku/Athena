@@ -1,6 +1,6 @@
 # Loop Proof
 
-이 문서는 Athena가 실제로 `plan → improve → evaluate → redesign → repeat` 루프를 반복한다는 증거를 생성하고 기록하기 위한 구조다.
+이 문서는 Athena가 실제로 `collect → compare → plan → improve → evaluate → redesign → repeat` 루프를 반복한다는 증거를 생성하고 기록하기 위한 구조다.
 
 선행 조건: P0(iteration cascading) 코드 구현 완료 — `cascadeIteration()`, `IterationCycleRecord`, `athena research iterations <run-id>` 뷰가 동작해야 한다.
 

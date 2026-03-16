@@ -114,8 +114,11 @@ export class TeamOrchestrator {
           ? evaluateReconsiderationTriggers([trigger], proposal, pack)
           : [];
       });
+    const revisitProposalIds = new Set<string>();
+    const revisitEvidenceLinks = new Set<string>();
 
     for (const satisfied of satisfiedTriggers) {
+      revisitProposalIds.add(satisfied.trigger.proposalId);
       this.teamStore.updateReconsiderationTrigger(run.sessionId, satisfied.trigger.triggerId, {
         status: "revisit_due",
         satisfiedAt: Date.now(),
@@ -129,6 +132,7 @@ export class TeamOrchestrator {
           claimIds,
         });
         for (const claimId of satisfied.evidenceLinks) {
+          revisitEvidenceLinks.add(claimId);
           this.graphMemory.link({
             sourceId: `/research/proposals/${proposal.proposalId}`,
             targetId: resolveCanonicalClaimReference(claimId),
@@ -148,6 +152,21 @@ export class TeamOrchestrator {
       }
     }
 
+    if (satisfiedTriggers.length > 0 && (run.workflowState === "reported" || run.workflowState === "revisit_due")) {
+      this.reopenRunForRevisit(runId, {
+        reason: "new evidence satisfied reconsideration triggers",
+        currentStage: "planning",
+        metadata: {
+          proposalIds: Array.from(revisitProposalIds),
+          candidateId: pack.candidateId,
+        },
+        cycleReason: "reconsideration_trigger_satisfied",
+        cycleDetail: `candidate ${pack.candidateId} satisfied reconsideration triggers`,
+        proposalId: Array.from(revisitProposalIds)[0],
+        evidenceLinks: Array.from(revisitEvidenceLinks),
+      });
+    }
+
     this.graphMemory.link({
       sourceId: `/research/runs/${runId}`,
       targetId: `/research/candidates/${pack.candidateId}`,
@@ -161,8 +180,10 @@ export class TeamOrchestrator {
         },
       });
     }
+    const currentRun = this.teamStore.getTeamRun(runId);
     return this.teamStore.updateTeamRun(runId, {
       latestOutput: {
+        ...(currentRun?.latestOutput ?? {}),
         candidateId: pack.candidateId,
         subgraphNodeCount: subgraph.nodes.length,
         subgraphEdgeCount: subgraph.edges.length,
@@ -424,30 +445,35 @@ export class TeamOrchestrator {
         experimentId: result.experimentId,
       },
     });
-    const continuationAction = decision.decisionType === "revisit" ? "revisit" : "resume";
-    const continuationGate = this.teamStore.canAutomateAction(runId, continuationAction);
+    if (decision.decisionType === "revisit") {
+      const revisitRun = this.reopenRunForRevisit(runId, {
+        reason: "evaluation requested revisit based on experiment outcome",
+        currentStage: "reporting",
+        metadata: {
+          experimentId: result.experimentId,
+          outcomeStatus: result.outcomeStatus,
+          decisionId: decision.decisionId,
+        },
+        cycleReason: "simulation_regression",
+        cycleDetail: `simulation ${result.experimentId} outcome=${result.outcomeStatus} triggered revisit`,
+        proposalId: result.proposalId,
+        evidenceLinks: proposal?.claimIds,
+      });
+      return this.teamStore.updateTeamRun(runId, {
+        status: revisitRun?.status ?? "active",
+        latestOutput: {
+          ...(revisitRun?.latestOutput ?? {}),
+          experimentId: result.experimentId,
+          proposalId: result.proposalId,
+          outcomeStatus: result.outcomeStatus,
+          decisionId: decision.decisionId,
+          decisionType: decision.decisionType,
+        },
+      });
+    }
+    const continuationGate = this.teamStore.canAutomateAction(runId, "resume");
     if (!continuationGate.ok) {
-      const blockedRun = this.teamStore.noteAutomationBlock(runId, continuationAction, continuationGate.reason);
-      if (continuationAction === "revisit") {
-        this.teamStore.transitionWorkflow(runId, "reported", continuationGate.reason, {
-          currentStage: "reporting",
-          metadata: {
-            experimentId: result.experimentId,
-            outcomeStatus: result.outcomeStatus,
-            decisionId: decision.decisionId,
-          },
-        });
-        return this.teamStore.updateTeamRun(runId, {
-          status: "completed",
-          latestOutput: {
-            ...(blockedRun?.latestOutput ?? continuationGate.run?.latestOutput ?? {}),
-            experimentId: result.experimentId,
-            proposalId: result.proposalId,
-            outcomeStatus: result.outcomeStatus,
-            decisionId: decision.decisionId,
-          },
-        });
-      }
+      const blockedRun = this.teamStore.noteAutomationBlock(runId, "resume", continuationGate.reason);
       this.teamStore.transitionWorkflow(runId, "failed", continuationGate.reason, {
         currentStage: "reporting",
         metadata: {
@@ -468,12 +494,10 @@ export class TeamOrchestrator {
     }
     this.teamStore.transitionWorkflow(
       runId,
-      decision.decisionType === "revisit" ? "revisit_due" : nextStatus === "failed" ? "failed" : "reported",
-      decision.decisionType === "revisit"
-        ? "evaluation requested revisit based on experiment outcome"
-        : nextStatus === "failed"
-          ? "simulation failed during workflow execution"
-          : "evaluation completed and report is ready",
+      nextStatus === "failed" ? "failed" : "reported",
+      nextStatus === "failed"
+        ? "simulation failed during workflow execution"
+        : "evaluation completed and report is ready",
       {
         currentStage: "reporting",
         metadata: {
@@ -483,19 +507,6 @@ export class TeamOrchestrator {
         },
       },
     );
-
-    // Auto-cascade iteration when decision is revisit and automation allows it
-    if (decision.decisionType === "revisit") {
-      const cascadeResult = this.cascadeIteration(runId, {
-        reason: "simulation_regression",
-        reasonDetail: `simulation ${result.experimentId} outcome=${result.outcomeStatus} triggered revisit`,
-        proposalId: result.proposalId,
-        evidenceLinks: proposal?.claimIds,
-      });
-      if (cascadeResult && cascadeResult.workflowState === "running") {
-        return cascadeResult;
-      }
-    }
 
     return this.teamStore.updateTeamRun(runId, {
       status: nextStatus,
@@ -525,6 +536,45 @@ export class TeamOrchestrator {
       });
     }
     return rolledBack;
+  }
+
+  private reopenRunForRevisit(
+    runId: string,
+    options: {
+      reason: string;
+      currentStage: TeamStage;
+      metadata?: Record<string, unknown>;
+      cycleReason: IterationCycleReason;
+      cycleDetail: string;
+      proposalId?: string;
+      triggerId?: string;
+      evidenceLinks?: string[];
+    },
+  ): TeamRunRecord | null {
+    const current = this.teamStore.getTeamRun(runId);
+    if (!current) return null;
+
+    const revisitRun = current.workflowState === "revisit_due"
+      ? current
+      : this.teamStore.transitionWorkflow(runId, "revisit_due", options.reason, {
+          currentStage: options.currentStage,
+          metadata: options.metadata,
+        });
+    if (!revisitRun) return null;
+
+    const activeRun = this.teamStore.updateTeamRun(runId, { status: "active" }) ?? revisitRun;
+    const revisitGate = this.teamStore.canAutomateAction(runId, "revisit");
+    if (!revisitGate.ok) {
+      return this.teamStore.noteAutomationBlock(runId, "revisit", revisitGate.reason) ?? activeRun;
+    }
+
+    return this.cascadeIteration(runId, {
+      reason: options.cycleReason,
+      reasonDetail: options.cycleDetail,
+      proposalId: options.proposalId,
+      triggerId: options.triggerId,
+      evidenceLinks: options.evidenceLinks,
+    }) ?? activeRun;
   }
 
   /**

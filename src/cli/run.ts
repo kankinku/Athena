@@ -128,7 +128,10 @@ function printMode(opts: PrintOpts): Effect.Effect<void> {
     }
 
     try {
-      for await (const event of runtime.orchestrator.send(opts.prompt, attachments.length > 0 ? attachments : undefined)) {
+      for await (const event of runtime.loopController.sendUserPrompt(
+        opts.prompt,
+        attachments.length > 0 ? attachments : undefined,
+      )) {
         if (event.type === "text" && event.delta) {
           process.stdout.write(event.delta);
         }

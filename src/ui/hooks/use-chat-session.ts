@@ -12,6 +12,7 @@ interface UseChatSessionResult {
   stickyNotes: StickyNote[];
   addMessage: (role: Message["role"], content: string, tool?: ToolData) => number;
   handleSubmit: (input: string, attachments?: Attachment[]) => Promise<void>;
+  handleSyntheticSubmit: (input: string, label?: string) => Promise<void>;
 }
 
 function mapStoredMessages(messages: Array<{ role: string; content: string }>, nextId: () => number): Message[] {
@@ -24,6 +25,7 @@ function mapStoredMessages(messages: Array<{ role: string; content: string }>, n
 
 export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
   const {
+    loopController,
     orchestrator,
     sleepManager,
     connectionPool,
@@ -61,8 +63,15 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
     )));
   }, []);
 
-  const handleSubmit = useCallback(
-    async (input: string, attachments?: Attachment[]) => {
+  const submitPrompt = useCallback(
+    async (
+      input: string,
+      attachments?: Attachment[],
+      options?: {
+        echoRole?: Message["role"] | null;
+        echoContent?: string | null;
+      },
+    ) => {
       if (!input.trim()) {
         return;
       }
@@ -88,13 +97,15 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
       }
 
       if (sleepManager.isSleeping) {
-        addMessage("user", input);
+        addMessage(options?.echoRole ?? "user", options?.echoContent ?? input);
         addMessage("system", "Waking agent...");
         sleepManager.manualWake(input);
         return;
       }
 
-      addMessage("user", input);
+      if (options?.echoRole !== null) {
+        addMessage(options?.echoRole ?? "user", options?.echoContent ?? input);
+      }
       setIsStreaming(true);
 
       try {
@@ -102,7 +113,11 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
         let assistantMessageId: number | null = null;
         const toolMessageIds = new Map<string, number>();
 
-        for await (const event of orchestrator.send(input, attachments)) {
+        const eventStream = options?.echoRole === "system"
+          ? loopController.sendSyntheticPrompt(input)
+          : loopController.sendUserPrompt(input, attachments);
+
+        for await (const event of eventStream) {
           experimentTracker?.onEvent(event);
 
           if (event.type === "text" && event.delta) {
@@ -159,11 +174,29 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
       metricCollector,
       metricStore,
       nextMessageId,
+      loopController,
       orchestrator,
       sleepManager,
       stickyManager,
       updateMessage,
     ],
+  );
+
+  const handleSubmit = useCallback(
+    async (input: string, attachments?: Attachment[]) => {
+      await submitPrompt(input, attachments);
+    },
+    [submitPrompt],
+  );
+
+  const handleSyntheticSubmit = useCallback(
+    async (input: string, label = "Autonomous loop continuing...") => {
+      await submitPrompt(input, undefined, {
+        echoRole: "system",
+        echoContent: label,
+      });
+    },
+    [submitPrompt],
   );
 
   return {
@@ -172,5 +205,6 @@ export function useChatSession(runtime: AthenaRuntime): UseChatSessionResult {
     stickyNotes,
     addMessage,
     handleSubmit,
+    handleSyntheticSubmit,
   };
 }

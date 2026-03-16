@@ -50,6 +50,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   const {
     addMessage,
     handleSubmit,
+    handleSyntheticSubmit,
     isStreaming,
     messages,
     stickyNotes,
@@ -190,8 +191,10 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   }, [handleSubmit, initialAttachments, initialPrompt]);
 
   useRuntimeBridges({
+    activeResearchRun,
     addMessage: (role, content) => addMessage(role, content),
     handleSubmit: async (input) => handleSubmit(input),
+    handleSyntheticSubmit: async (input, label) => handleSyntheticSubmit(input, label),
     isStreaming,
     runtime,
   });
@@ -278,7 +281,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
             <Box flexGrow={1} alignItems="center" justifyContent="center" flexDirection="column">
               <Text color={C.primary} bold>{G.brand}</Text>
               <Text color={C.primary} bold>HELIOS</Text>
-              <Text color={C.dim}>autonomous ml research</Text>
+              <Text color={C.dim}>autonomous research loop</Text>
               <Text color={C.dim} dimColor>v{VERSION}</Text>
               <Text color={C.dim} dimColor>{""}</Text>
               <Text color={C.dim} dimColor>{uiLanguage === "kor" ? "/help로 명령어 보기" : "/help for commands"}</Text>

@@ -8,11 +8,12 @@
 
 ```text
 module goal
-  -> design a change
+  -> collect local evidence and relevant references
+  -> compare candidate changes
+  -> choose one bounded change
   -> execute or simulate
   -> evaluate
-  -> keep or discard
-  -> redesign
+  -> keep, discard, or revisit
   -> repeat
 ```
 
@@ -36,8 +37,8 @@ module goal
 - 개선되면 유지한다.
 - 개선이 없으면 버린다.
 - 악화되면 즉시 폐기한다.
-- 범위를 벗어나면 상위 proposal 또는 협의 경로로 올린다.
+- 범위를 벗어나면 상위 planning 또는 협의 경로로 올린다.
 
 ## 중요 해석
 
-모듈 autoresearch는 제품 전체를 대체하지 않는다. 전체 자율 연구 루프가 더 작은 범위에서 반복되는 방식이다.
+모듈 autoresearch는 제품 전체를 대체하지 않는다. 전체 자율 연구 루프의 수집, 비교, 계획, 실행, 평가 단계를 더 작은 범위에서 반복하는 방식이다.
